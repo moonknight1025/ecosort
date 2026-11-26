@@ -58,6 +58,9 @@ function activateTab(name) {
     const isActive = tab.dataset.tab === name;
     tab.classList.toggle('is-active', isActive);
     tab.setAttribute('aria-selected', String(isActive));
+    // Roving tabindex: only the active tab is in the tab order, so Tab moves
+    // past the tablist and the arrow keys move within it.
+    tab.tabIndex = isActive ? 0 : -1;
   }
   for (const panel of el.panels) {
     const isActive = panel.id === `tab-${name}`;
@@ -182,12 +185,6 @@ function applyUserPayload(payload) {
   renderBins(payload.bin_counts);
   renderBadges(payload.badges);
   renderChallenges(payload.challenges);
-  if (payload.challenges) {
-    const done = payload.challenges.filter((row) => row.completed).length;
-    if (done > 0) {
-      toast(`${done} of 7 challenge days claimed.`);
-    }
-  }
 }
 
 function saveProfile(user) {
@@ -278,14 +275,14 @@ function setPresetsDisabled(disabled) {
 }
 
 function handlePreset(preset, keyword) {
-  preset.disabled = true;
+  // identify() owns the busy flag and the preset disabling; re-enabling here as
+  // well could flip the buttons back on while another request is still in
+  // flight.
   identify(() => {
     const form = new FormData();
     form.append('preset_keyword', keyword);
     return form;
-  }, preset.textContent.trim()).finally(() => {
-    preset.disabled = false;
-  });
+  }, preset.textContent.trim());
 }
 
 function handleImageFile(file) {
@@ -302,6 +299,27 @@ function handleImageFile(file) {
 function wireEvents() {
   el.tabs.forEach((tab) => {
     tab.addEventListener('click', () => activateTab(tab.dataset.tab));
+  });
+
+  // WAI-ARIA tabs pattern: arrow keys move between tabs, Home/End jump.
+  const tablist = document.querySelector('.tabs');
+  tablist.addEventListener('keydown', (event) => {
+    const keys = ['ArrowRight', 'ArrowLeft', 'Home', 'End'];
+    if (!keys.includes(event.key)) {
+      return;
+    }
+    event.preventDefault();
+    const order = el.tabs.map((tab) => tab.dataset.tab);
+    const current = order.indexOf(
+      document.activeElement?.dataset?.tab ?? el.tabs[0].dataset.tab,
+    );
+    let next = current;
+    if (event.key === 'ArrowRight') next = (current + 1) % order.length;
+    if (event.key === 'ArrowLeft') next = (current - 1 + order.length) % order.length;
+    if (event.key === 'Home') next = 0;
+    if (event.key === 'End') next = order.length - 1;
+    activateTab(order[next]);
+    el.tabs[next].focus();
   });
 
   el.setProfile.addEventListener('click', () => syncProfile());

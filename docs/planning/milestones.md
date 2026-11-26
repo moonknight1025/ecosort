@@ -43,7 +43,7 @@ One branch and one PR per milestone keeps each diff reviewable:
 
 | Milestone | Branch | PR target |
 | --- | --- | --- |
-| M1 | `feat/m1-scaffold-bootstrap` (local commit `b2449d2`) | `main` |
+| M1 | `feat/m1-scaffold-bootstrap` (local commit `1daffb2`) | `main` |
 | M2 | `feat/m2-waste-identification` | `main` |
 | M3 | `feat/m3-disposal-and-bins` | `main` |
 | M4 | `feat/m4-gamification-leaderboards` | `main` |
