@@ -219,6 +219,17 @@ CATALOG_SEED: list[tuple[str, str, str, str, int]] = [
 # society, office or region may type its own group name.
 DEFAULT_GROUP = "General Community"
 DEFAULT_CITY = "Local Area"
+# (label, keyword) pairs for the UI's quick-sample dropdown, mirroring the
+# clickable preset buttons.
+SAMPLE_PRESETS: tuple[tuple[str, str], ...] = (
+    ("Plastic Bottle", "bottle"),
+    ("Banana Peel", "banana"),
+    ("Used Battery", "battery"),
+    ("Cardboard Box", "box"),
+    ("Broken Charger", "charger"),
+    ("Chip Wrapper", "wrapper"),
+)
+
 GROUP_PRESETS: tuple[str, ...] = (
     "General Community",
     "Home & Family",
@@ -1035,8 +1046,38 @@ def dispose_waste():
     if user is None:
         return jsonify({"error": "unknown user_id"}), 404
 
-    # Server-side truth. The client's category/points never reach the database.
+    # Server-side truth. `points` and the legacy `category` field are ignored, so
+    # a forged payload cannot inflate a score.
     resolved = classify_waste(item_name)
+
+    # `category_override` is a *separate*, explicit channel for the UI's
+    # "correct the category" control. It is validated against the five streams and
+    # the reward is still derived here from that stream's catalog range - the
+    # client never supplies points.
+    override = payload.get("category_override")
+    if override is not None:
+        override = str(override).strip()
+        if override:
+            if override not in BIN_META:
+                return (
+                    jsonify(
+                        {
+                            "error": "category_override must be one of the five streams",
+                            "allowed": list(BIN_META),
+                        }
+                    ),
+                    400,
+                )
+            resolved = {
+                "display_name": item_name,
+                "category": override,
+                "bin_color": BIN_META[override]["bin_color"],
+                "instructions": resolved["instructions"],
+                "points": clamp_points(override, None),
+                "matched_keyword": None,
+                "fallback": False,
+                "overridden": True,
+            }
 
     duplicate = db.execute(
         "SELECT id FROM disposal_logs WHERE user_id = ? AND client_token = ?",
@@ -1081,6 +1122,7 @@ def dispose_waste():
                 "bin_color": resolved["bin_color"],
                 "points": resolved["points"],
                 "fallback": resolved["fallback"],
+                "overridden": bool(resolved.get("overridden")),
             },
             "duplicate": duplicate is not None,
         }
@@ -1223,6 +1265,7 @@ def index():
     return render_template(
         "index.html",
         group_presets=GROUP_PRESETS,
+        sample_presets=SAMPLE_PRESETS,
         city_presets=CITY_PRESETS,
         default_group=DEFAULT_GROUP,
         default_city=DEFAULT_CITY,

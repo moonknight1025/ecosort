@@ -73,8 +73,8 @@ await page.goto(BASE, { waitUntil: 'networkidle' });
 
 // A profile is required before a disposal can be logged.
 await page.fill('#username', 'CameraTester');
-await page.fill('#group-name', 'Apartment Society');
-await page.fill('#city', 'Coimbatore');
+await page.selectOption('#group-select', 'Apartment Society');
+await page.selectOption('#city-select', 'Coimbatore');
 await page.click('#set-profile');
 await page.waitForFunction(
   () => document.getElementById('eco-score')?.textContent === '0',
