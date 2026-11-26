@@ -1,10 +1,10 @@
 /**
  * EcoSort frontend.
  *
- * Milestone 1 owns the shell behaviours only: tab navigation, profile
- * persistence in localStorage, and the toast/toast-and-pulse primitives that
- * later milestones reuse. Every control that still needs an API route says so
- * out loud instead of pretending to succeed.
+ * Milestone 2 owns: profile sync against /api/user, the scan flows against
+ * /api/identify (dropzone + six presets), and rendering the classify result.
+ * Disposal, badges-by-achievement and leaderboards arrive in M3/M4; the controls
+ * that still need those routes say so instead of faking success.
  */
 
 const DOMAIN = JSON.parse(document.getElementById('domain-config').textContent);
@@ -12,8 +12,8 @@ const PROFILE_KEY = 'ecosort.profile';
 
 const state = {
   profile: null,
-  bins: Object.fromEntries(Object.keys(DOMAIN.bins).map((category) => [category, 0])),
   result: null,
+  busy: false,
 };
 
 const el = {
@@ -25,6 +25,15 @@ const el = {
   ecoScore: document.getElementById('eco-score'),
   toast: document.getElementById('toast'),
   bins: document.getElementById('bins'),
+  dropzone: document.getElementById('dropzone'),
+  imageInput: document.getElementById('image-input'),
+  presets: Array.from(document.querySelectorAll('.preset')),
+  resultCard: document.getElementById('result-card'),
+  resultCategory: document.getElementById('result-category'),
+  resultPoints: document.getElementById('result-points'),
+  resultName: document.getElementById('result-name'),
+  resultInstructions: document.getElementById('result-instructions'),
+  disposeBtn: document.getElementById('dispose-btn'),
 };
 
 let toastTimer = null;
@@ -40,7 +49,7 @@ function toast(message) {
     setTimeout(() => {
       el.toast.hidden = true;
     }, 200);
-  }, 2400);
+  }, 2600);
 }
 
 /** Switch the visible panel and keep ARIA state in sync. */
@@ -54,6 +63,49 @@ function activateTab(name) {
     const isActive = panel.id === `tab-${name}`;
     panel.classList.toggle('is-active', isActive);
     panel.hidden = !isActive;
+  }
+}
+
+/* --- API helpers -------------------------------------------------------- */
+
+async function callApi(path, options) {
+  const response = await fetch(path, options);
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+  if (!response.ok) {
+    throw new Error((payload && payload.error) || `Request failed (${response.status})`);
+  }
+  return payload;
+}
+
+function postJson(path, body) {
+  return callApi(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+function postForm(path, formData) {
+  return callApi(path, { method: 'POST', body: formData });
+}
+
+/* --- rendering ---------------------------------------------------------- */
+
+function setEcoScore(points) {
+  el.ecoScore.textContent = String(points);
+}
+
+function renderBins(counts) {
+  if (!counts) {
+    return;
+  }
+  for (const [category, count] of Object.entries(counts)) {
+    pulseBin(category, count);
   }
 }
 
@@ -74,42 +126,107 @@ function pulseBin(category, count) {
   bin.classList.add('is-pulsing');
 }
 
-function setEcoScore(points) {
-  el.ecoScore.textContent = String(points);
+function renderBadges(badges) {
+  if (!badges) {
+    return;
+  }
+  for (const badge of badges) {
+    const node = document.querySelector(`.badge[data-badge="${badge.id}"]`);
+    if (!node) {
+      continue;
+    }
+    node.classList.toggle('is-unlocked', badge.unlocked);
+    node.classList.toggle('is-locked', !badge.unlocked);
+    const label = node.querySelector('.badge-state');
+    if (label) {
+      label.textContent = badge.unlocked ? 'Unlocked' : 'Locked';
+    }
+  }
 }
 
-function saveProfile(profile) {
-  state.profile = profile;
-  localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
-  el.username.value = profile.username;
-  if (profile.campus) {
-    el.campus.value = profile.campus;
+function renderChallenges(challenges) {
+  if (!challenges) {
+    return;
+  }
+  for (const challenge of challenges) {
+    const row = document.querySelector(`.challenge[data-day="${challenge.day_number}"]`);
+    if (!row) {
+      continue;
+    }
+    row.classList.toggle('is-done', challenge.completed);
+    const button = row.querySelector('.btn-claim');
+    if (button) {
+      button.disabled = challenge.completed;
+      button.textContent = challenge.completed ? 'Claimed' : `Claim +${DOMAIN.challengeReward}`;
+    }
+  }
+}
+
+/** Render the classify result and paint the card in its bin colour. */
+function renderResult(result) {
+  state.result = result;
+  const meta = DOMAIN.bins[result.category];
+  el.resultCard.hidden = false;
+  if (meta) {
+    el.resultCard.style.setProperty('--bin', meta.hex);
+  }
+  el.resultCategory.textContent = result.category;
+  el.resultPoints.textContent = `+${result.points} pts`;
+  el.resultName.textContent = result.display_name;
+  el.resultInstructions.textContent = result.instructions;
+}
+
+function applyUserPayload(payload) {
+  saveProfile(payload.user);
+  setEcoScore(payload.user.eco_points);
+  renderBins(payload.bin_counts);
+  renderBadges(payload.badges);
+  renderChallenges(payload.challenges);
+  if (payload.challenges) {
+    const done = payload.challenges.filter((row) => row.completed).length;
+    if (done > 0) {
+      toast(`${done} of 7 challenge days claimed.`);
+    }
+  }
+}
+
+function saveProfile(user) {
+  state.profile = user;
+  localStorage.setItem(PROFILE_KEY, JSON.stringify(user));
+  el.username.value = user.username;
+  if (user.campus) {
+    el.campus.value = user.campus;
   }
 }
 
 function restoreProfile() {
   const raw = localStorage.getItem(PROFILE_KEY);
   if (!raw) {
-    return;
+    return false;
   }
   try {
     const profile = JSON.parse(raw);
-    if (profile && typeof profile.username === 'string') {
-      state.profile = profile;
-      el.username.value = profile.username;
-      if (profile.campus) {
-        el.campus.value = profile.campus;
-      }
-      if (typeof profile.eco_points === 'number') {
-        setEcoScore(profile.eco_points);
-      }
+    if (!profile || typeof profile.username !== 'string') {
+      throw new Error('invalid');
     }
+    state.profile = profile;
+    el.username.value = profile.username;
+    if (profile.campus) {
+      el.campus.value = profile.campus;
+    }
+    if (typeof profile.eco_points === 'number') {
+      setEcoScore(profile.eco_points);
+    }
+    return true;
   } catch {
     localStorage.removeItem(PROFILE_KEY);
+    return false;
   }
 }
 
-function handleSetProfile() {
+/* --- actions ------------------------------------------------------------ */
+
+async function syncProfile({ announce } = { announce: true }) {
   const username = el.username.value.trim();
   const campus = el.campus.value;
   if (!username) {
@@ -117,38 +234,120 @@ function handleSetProfile() {
     el.username.focus();
     return;
   }
-  saveProfile({ username, campus, eco_points: state.profile?.eco_points ?? 0 });
-  toast(`${username} saved locally. Server sync lands in Milestone 2.`);
-}
 
-function wirePlaceholders() {
-  // Controls whose backing routes arrive in milestones 2-4.
-  const pending = [
-    ...document.querySelectorAll('.preset, #image-input, #dispose-btn, .btn-claim'),
-  ];
-  for (const control of pending) {
-    control.addEventListener('click', (event) => {
-      event.preventDefault();
-      toast('Scan, disposal and challenge routes land in the next milestones.');
-    });
+  el.setProfile.disabled = true;
+  try {
+    const payload = await postJson('/api/user', { username, campus });
+    applyUserPayload(payload);
+    if (announce) {
+      toast(`Welcome ${payload.user.username} · ${payload.user.campus}`);
+    }
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    el.setProfile.disabled = false;
   }
 }
 
-function init() {
+async function identify(payloadBuilder, label) {
+  if (state.busy) {
+    return;
+  }
+  state.busy = true;
+  setPresetsDisabled(true);
+  try {
+    const result = await postForm('/api/identify', payloadBuilder());
+    renderResult(result);
+    toast(
+      result.fallback
+        ? `${label}: no catalog match, sorted as ${result.category}.`
+        : `${label}: ${result.category} · +${result.points} pts`,
+    );
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    state.busy = false;
+    setPresetsDisabled(false);
+  }
+}
+
+function setPresetsDisabled(disabled) {
+  for (const preset of el.presets) {
+    preset.disabled = disabled;
+  }
+}
+
+function handlePreset(preset, keyword) {
+  preset.disabled = true;
+  identify(() => {
+    const form = new FormData();
+    form.append('preset_keyword', keyword);
+    return form;
+  }, preset.textContent.trim()).finally(() => {
+    preset.disabled = false;
+  });
+}
+
+function handleImageFile(file) {
+  if (!file) {
+    return;
+  }
+  identify(() => {
+    const form = new FormData();
+    form.append('image', file, file.name);
+    return form;
+  }, file.name || 'Upload');
+}
+
+function wireEvents() {
   el.tabs.forEach((tab) => {
     tab.addEventListener('click', () => activateTab(tab.dataset.tab));
   });
-  el.setProfile.addEventListener('click', handleSetProfile);
+
+  el.setProfile.addEventListener('click', () => syncProfile());
   el.username.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
       event.preventDefault();
-      handleSetProfile();
+      syncProfile();
     }
   });
 
-  wirePlaceholders();
-  restoreProfile();
+  el.presets.forEach((preset) => {
+    preset.addEventListener('click', () => handlePreset(preset, preset.dataset.preset));
+  });
+
+  el.imageInput.addEventListener('change', () => {
+    handleImageFile(el.imageInput.files[0]);
+    el.imageInput.value = '';
+  });
+
+  ['dragenter', 'dragover'].forEach((type) => {
+    el.dropzone.addEventListener(type, (event) => {
+      event.preventDefault();
+      el.dropzone.classList.add('is-dragover');
+    });
+  });
+  ['dragleave', 'drop'].forEach((type) => {
+    el.dropzone.addEventListener(type, (event) => {
+      event.preventDefault();
+      el.dropzone.classList.remove('is-dragover');
+    });
+  });
+  el.dropzone.addEventListener('drop', (event) => {
+    handleImageFile(event.dataTransfer?.files?.[0]);
+  });
+
+  el.disposeBtn.addEventListener('click', () => {
+    toast('Tossing into the virtual bin lands in Milestone 3.');
+  });
+}
+
+function init() {
+  wireEvents();
   activateTab('scan');
+  if (restoreProfile()) {
+    syncProfile({ announce: false });
+  }
 }
 
 init();

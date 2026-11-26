@@ -14,7 +14,8 @@ from __future__ import annotations
 import os
 import sqlite3
 
-from flask import Flask, g, render_template
+from flask import Flask, g, jsonify, render_template, request
+from werkzeug.utils import secure_filename
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE_PATH = os.path.join(BASE_DIR, "database.db")
@@ -33,6 +34,18 @@ BIN_META = {
 
 FALLBACK_CATEGORY = "Dry Waste"
 FALLBACK_POINTS = 10
+FALLBACK_INSTRUCTIONS = (
+    "We could not match this item to a known stream. Bag it and drop it in the "
+    "gray dry-waste bin; a campus volunteer will re-sort it."
+)
+
+# Badge rules (PRD 4.2) expressed as category groups, so the SQL below never
+# re-types the canonical category literals.
+PLASTIC_CATEGORIES = ("Recyclable Waste", "Dry Waste")
+HAZARD_CATEGORIES = ("E-Waste", "Hazardous Waste")
+
+ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 
 # (keyword, display_name, category, instructions, points)
 CATALOG_SEED: list[tuple[str, str, str, str, int]] = [
@@ -254,6 +267,9 @@ def init_db(database_path: str = DATABASE_PATH) -> None:
                 """,
                 (day_number,),
             )
+        assert set(PLASTIC_CATEGORIES + HAZARD_CATEGORIES) <= set(BIN_META), (
+            "badge category groups drifted from BIN_META"
+        )
         connection.commit()
     finally:
         connection.close()
@@ -268,7 +284,133 @@ def get_db() -> sqlite3.Connection:
     return g.db
 
 
+def user_payload(row: sqlite3.Row) -> dict:
+    """Shape a ``users`` row for the JSON contract."""
+    return {
+        "id": row["id"],
+        "username": row["username"],
+        "campus": row["campus"],
+        "eco_points": row["eco_points"],
+        "streak_days": row["streak_days"],
+    }
+
+
+def ensure_challenge_rows(connection: sqlite3.Connection, user_id: int) -> None:
+    """Give a user one challenge row per day; UNIQUE(user_id, day_number) dedupes."""
+    connection.executemany(
+        "INSERT OR IGNORE INTO user_challenges (user_id, day_number, completed) VALUES (?, ?, 0)",
+        [(user_id, day_number) for day_number in CHALLENGE_TASKS],
+    )
+
+
+def challenge_payload(connection: sqlite3.Connection, user_id: int) -> list[dict]:
+    rows = connection.execute(
+        "SELECT day_number, completed FROM user_challenges WHERE user_id = ? "
+        "ORDER BY day_number",
+        (user_id,),
+    ).fetchall()
+    return [
+        {
+            "day_number": row["day_number"],
+            "completed": bool(row["completed"]),
+            "task": CHALLENGE_TASKS.get(row["day_number"], ""),
+        }
+        for row in rows
+    ]
+
+
+def bin_counts_for(connection: sqlite3.Connection, user_id: int) -> dict[str, int]:
+    """Disposal count per bin for one user; every category is always present."""
+    counts = {category: 0 for category in BIN_META}
+    rows = connection.execute(
+        "SELECT category, COUNT(*) AS total FROM disposal_logs WHERE user_id = ? "
+        "GROUP BY category",
+        (user_id,),
+    ).fetchall()
+    for row in rows:
+        if row["category"] in counts:
+            counts[row["category"]] = row["total"]
+    return counts
+
+
+def badge_states(
+    connection: sqlite3.Connection, user_id: int, eco_points: int
+) -> list[dict]:
+    """Evaluate the four badges from the logs, never from a stored flag."""
+    row = connection.execute(
+        """
+        SELECT
+            COUNT(*) AS total,
+            COALESCE(SUM(category IN (?, ?)), 0) AS plastic,
+            COALESCE(SUM(category IN (?, ?)), 0) AS hazard
+        FROM disposal_logs
+        WHERE user_id = ?
+        """,
+        (*PLASTIC_CATEGORIES, *HAZARD_CATEGORIES, user_id),
+    ).fetchone()
+
+    unlocked = {
+        "first_step": row["total"] >= 1,
+        "plastic_warrior": row["plastic"] >= 3,
+        "hazard_hero": row["hazard"] >= 1,
+        "green_champion": eco_points >= 100,
+    }
+    return [
+        {
+            "id": badge_id,
+            "name": name,
+            "requirement": requirement,
+            "unlocked": unlocked[badge_id],
+        }
+        for badge_id, name, requirement in BADGES
+    ]
+
+
+def classify_waste(keyword_text: str = "", image_path: str | None = None) -> dict:
+    """Classify waste from a preset keyword and/or an uploaded file name.
+
+    Deterministic, offline, and the single seam for a future vision model: the
+    body can be swapped for a model call without changing the route signature,
+    the JSON contract, or any SQL. Matching is case-insensitive substring over
+    ``waste_catalog.keyword``; the longest matching keyword wins so
+    ``plastic_bottle_01.jpg`` resolves the same way every time.
+    """
+    haystack = " ".join(
+        part for part in (keyword_text, os.path.basename(image_path or "")) if part
+    ).lower()
+
+    rows = get_db().execute(
+        "SELECT keyword, display_name, category, bin_color, instructions, points "
+        "FROM waste_catalog"
+    ).fetchall()
+    matches = [row for row in rows if row["keyword"].lower() in haystack]
+
+    if matches:
+        best = max(matches, key=lambda row: (len(row["keyword"]), row["keyword"]))
+        return {
+            "display_name": best["display_name"],
+            "category": best["category"],
+            "bin_color": best["bin_color"],
+            "instructions": best["instructions"],
+            "points": best["points"],
+            "matched_keyword": best["keyword"],
+            "fallback": False,
+        }
+
+    fallback = BIN_META[FALLBACK_CATEGORY]
+    return {
+        "display_name": "Unrecognized Item",
+        "category": FALLBACK_CATEGORY,
+        "bin_color": fallback["bin_color"],
+        "instructions": FALLBACK_INSTRUCTIONS,
+        "points": FALLBACK_POINTS,
+        "matched_keyword": None,
+        "fallback": True,
+    }
+
+
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
 
 
 @app.teardown_appcontext
@@ -276,6 +418,83 @@ def close_db(_exception: BaseException | None = None) -> None:
     connection = g.pop("db", None)
     if connection is not None:
         connection.close()
+
+
+@app.errorhandler(413)
+def upload_too_large(_error):
+    """Keep oversized uploads a JSON 413 instead of Flask's HTML default."""
+    limit_mb = MAX_UPLOAD_BYTES // (1024 * 1024)
+    return jsonify({"error": f"image exceeds the {limit_mb} MB limit", "fallback": True}), 413
+
+
+@app.post("/api/user")
+def create_or_fetch_user():
+    """Create a profile or return the existing one, then initialise its state.
+
+    Idempotent by design: a repeat call for a known username preserves
+    ``eco_points`` and the challenge rows, and only refreshes the campus.
+    """
+    payload = request.get_json(silent=True) or {}
+    username = str(payload.get("username") or "").strip()
+    if not username:
+        return jsonify({"error": "username is required"}), 400
+
+    campus = str(payload.get("campus") or "").strip() or "Main Campus"
+    if campus not in CAMPUSES:
+        campus = "Main Campus"
+
+    db = get_db()
+    row = db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+    if row is None:
+        db.execute(
+            "INSERT INTO users (username, campus) VALUES (?, ?)", (username, campus)
+        )
+        db.commit()
+        row = db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+    elif campus != row["campus"]:
+        db.execute("UPDATE users SET campus = ? WHERE id = ?", (campus, row["id"]))
+        db.commit()
+        row = db.execute("SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone()
+
+    ensure_challenge_rows(db, row["id"])
+    db.commit()
+
+    return jsonify(
+        {
+            "user": user_payload(row),
+            "badges": badge_states(db, row["id"], row["eco_points"]),
+            "challenges": challenge_payload(db, row["id"]),
+            "bin_counts": bin_counts_for(db, row["id"]),
+        }
+    )
+
+
+@app.post("/api/identify")
+def identify_waste():
+    """Classify a preset keyword and/or an uploaded image file name.
+
+    Every unmatched, empty or rejected input still resolves to the Dry Waste
+    fallback with HTTP 200 - the PRD forbids a 500 on bad uploads.
+    """
+    keyword = str(
+        request.form.get("preset_keyword") or request.form.get("keyword") or ""
+    ).strip()
+
+    image_path = None
+    upload = request.files.get("image")
+    if upload is not None and upload.filename:
+        safe_name = secure_filename(upload.filename)
+        extension = os.path.splitext(safe_name)[1].lower()
+        if safe_name and extension in ALLOWED_IMAGE_EXTENSIONS:
+            os.makedirs(UPLOAD_DIR, exist_ok=True)
+            image_path = os.path.join(UPLOAD_DIR, safe_name)
+            upload.save(image_path)
+
+    result = classify_waste(keyword, image_path)
+    result["image_url"] = (
+        f"/static/uploads/{os.path.basename(image_path)}" if image_path else None
+    )
+    return jsonify(result)
 
 
 @app.route("/")
