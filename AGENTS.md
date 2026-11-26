@@ -241,6 +241,11 @@ not**.
   API in tests; never add a test-only branch to production code.
 - `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) unset means no client, no network call
   and no import-time work. `vision.enabled()` is evaluated per request.
+- **Model names churn faster than this repo.** `gemini-2.5-flash` is retired
+  (HTTP 404). Verify before changing `DEFAULT_MODEL`:
+  `python tests/live_vision_check.py <photo>` must print
+  `analysis_mode: 'ai_vision'` for every image, otherwise the model is wrong or
+  the key/quota is out. Never set a default that was only "the newest".
 - The model answer is **untrusted input**: `vision._validate()` checks it, and
   `analyze_waste()` re-checks category + steps at the boundary. An unknown
   category is a rejected answer, not a new stream.

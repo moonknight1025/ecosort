@@ -28,3 +28,6 @@ tests/e2e/node_modules/
 
 # Local scratch output
 .scratch/
+
+# Local test photos (never committed)
+.livephotos/
