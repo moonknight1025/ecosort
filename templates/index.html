@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EcoSort &middot; Sort smart, score green</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%E2%99%BB%3C/text%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="app-header">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">&#9851;</span>
+          <span class="brand-text">
+            <strong>EcoSort</strong>
+            <small>Sort smart, score green</small>
+          </span>
+        </div>
+        <div class="score-badge" aria-live="polite">
+          <span class="score-label">Eco Score</span>
+          <strong id="eco-score">0</strong>
+        </div>
+      </header>
+
+      <section class="profile-bar" aria-label="Your profile">
+        <label class="field">
+          <span class="sr-only">Username</span>
+          <input
+            id="username"
+            name="username"
+            type="text"
+            placeholder="Your name"
+            autocomplete="nickname"
+            maxlength="32"
+          />
+        </label>
+        <label class="field">
+          <span class="sr-only">Campus</span>
+          <select id="campus" name="campus">
+            {% for campus in campuses %}
+            <option value="{{ campus }}">{{ campus }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button id="set-profile" class="btn btn-primary" type="button">Set Profile</button>
+      </section>
+
+      <nav class="tabs" role="tablist" aria-label="EcoSort sections">
+        <button
+          class="tab is-active"
+          id="tab-btn-scan"
+          role="tab"
+          type="button"
+          aria-selected="true"
+          aria-controls="tab-scan"
+          data-tab="scan"
+        >
+          Scan &amp; Bin
+        </button>
+        <button
+          class="tab"
+          id="tab-btn-badges"
+          role="tab"
+          type="button"
+          aria-selected="false"
+          aria-controls="tab-badges"
+          data-tab="badges"
+        >
+          Badges &amp; 7-Day
+        </button>
+        <button
+          class="tab"
+          id="tab-btn-rank"
+          role="tab"
+          type="button"
+          aria-selected="false"
+          aria-controls="tab-rank"
+          data-tab="rank"
+        >
+          Campus Rank
+        </button>
+      </nav>
+
+      <main>
+        <section id="tab-scan" class="panel is-active" role="tabpanel" aria-labelledby="tab-btn-scan">
+          <h2 class="panel-title">Scan &amp; Bin</h2>
+          <p class="panel-hint">Drop a photo of your waste, or tap a sample item.</p>
+
+          <label class="dropzone" for="image-input" id="dropzone">
+            <span class="dropzone-icon" aria-hidden="true">&#128247;</span>
+            <span class="dropzone-copy">
+              <strong>Upload a waste photo</strong>
+              <small>JPG, PNG or WEBP &middot; classification runs on the file name</small>
+            </span>
+            <input id="image-input" name="image" type="file" accept="image/*" hidden />
+          </label>
+
+          <div class="presets" aria-label="Quick test items">
+            <button class="preset" type="button" data-preset="bottle">Plastic Bottle</button>
+            <button class="preset" type="button" data-preset="banana">Banana Peel</button>
+            <button class="preset" type="button" data-preset="battery">Used Battery</button>
+            <button class="preset" type="button" data-preset="box">Cardboard Box</button>
+            <button class="preset" type="button" data-preset="charger">Broken Charger</button>
+            <button class="preset" type="button" data-preset="wrapper">Chip Wrapper</button>
+          </div>
+
+          <article class="result-card" id="result-card" hidden>
+            <header class="result-head">
+              <span class="category-chip" id="result-category">Dry Waste</span>
+              <span class="points-chip" id="result-points">+10 pts</span>
+            </header>
+            <h3 id="result-name">Scan an item to begin</h3>
+            <p id="result-instructions">Disposal instructions will appear here.</p>
+            <button class="btn btn-dispose" id="dispose-btn" type="button">
+              Toss into Virtual Bin
+            </button>
+          </article>
+
+          <h3 class="section-title">Virtual Recycling Bins</h3>
+          <div class="bins" id="bins">
+            {% for category, meta in bins %}
+            <div
+              class="bin"
+              data-category="{{ category }}"
+              style="--bin: {{ meta.hex }}"
+            >
+              <span class="bin-emoji" aria-hidden="true">&#128686;</span>
+              <span class="bin-count" data-count-for="{{ category }}">0</span>
+              <span class="bin-name">{{ category }}</span>
+              <span class="bin-color">{{ meta.bin_color }}</span>
+            </div>
+            {% endfor %}
+          </div>
+        </section>
+
+        <section id="tab-badges" class="panel" role="tabpanel" aria-labelledby="tab-btn-badges" hidden>
+          <h2 class="panel-title">Badges</h2>
+          <div class="badges">
+            {% for badge_id, badge_name, badge_requirement in badges %}
+            <div class="badge is-locked" data-badge="{{ badge_id }}">
+              <span class="badge-icon" aria-hidden="true">&#127942;</span>
+              <strong>{{ badge_name }}</strong>
+              <small>{{ badge_requirement }}</small>
+              <span class="badge-state">Locked</span>
+            </div>
+            {% endfor %}
+          </div>
+
+          <h2 class="panel-title">7-Day Zero-Waste Challenge</h2>
+          <p class="panel-hint">Claim {{ challenge_reward }} Eco Points for each day you complete.</p>
+          <ol class="challenges">
+            {% for day, task in challenge_tasks.items() %}
+            <li class="challenge" data-day="{{ day }}">
+              <span class="challenge-day">Day {{ day }}</span>
+              <span class="challenge-task">{{ task }}</span>
+              <button class="btn btn-claim" type="button" data-claim-day="{{ day }}">
+                Claim +{{ challenge_reward }}
+              </button>
+            </li>
+            {% endfor %}
+          </ol>
+        </section>
+
+        <section id="tab-rank" class="panel" role="tabpanel" aria-labelledby="tab-btn-rank" hidden>
+          <h2 class="panel-title">Campus Cleanliness Battle</h2>
+          <ul class="rank-list" id="campus-rank">
+            <li class="rank-empty">Campus standings load once you set a profile.</li>
+          </ul>
+
+          <h2 class="panel-title">Top Eco Warriors</h2>
+          <ol class="rank-list" id="user-rank">
+            <li class="rank-empty">Individual rankings arrive with the leaderboard API.</li>
+          </ol>
+        </section>
+      </main>
+
+      <footer class="app-footer">
+        <small>EcoSort MVP &middot; Flask + SQLite &middot; offline-first</small>
+      </footer>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+    <script type="application/json" id="domain-config">{{ domain_config | tojson }}</script>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+  </body>
+</html>
