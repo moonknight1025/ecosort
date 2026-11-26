@@ -19,7 +19,39 @@ from uuid import uuid4
 from flask import Flask, g, jsonify, render_template, request
 from werkzeug.utils import secure_filename
 
+import rate_limit
+import vision
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _load_dotenv(path: str | None = None) -> None:
+    """Load ``.env`` into the environment without adding a dependency.
+
+    Config only (no writes), so doing it at import is safe — unlike database
+    bootstrapping, which happens on the first request. Existing environment
+    variables always win, which is what lets the test suite pin its own values.
+    """
+    env_path = path or os.path.join(BASE_DIR, ".env")
+    if not os.path.exists(env_path):
+        return
+    try:
+        with open(env_path, encoding="utf-8") as handle:
+            for raw in handle:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                if not key or key in os.environ:
+                    continue
+                os.environ[key] = value.strip().strip('"').strip("'")
+    except OSError:
+        # A broken .env must never stop the app from starting.
+        return
+
+
+_load_dotenv()
 DATABASE_PATH = os.path.join(BASE_DIR, "database.db")
 UPLOAD_DIR = os.path.join(BASE_DIR, "static", "uploads")
 
@@ -519,6 +551,125 @@ def classify_waste(
     }
 
 
+MEDIA_TYPE_BY_EXTENSION = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
+}
+
+
+def category_point_bounds() -> dict[str, tuple[int, int]]:
+    """Per-category (min, max) reward, derived from the catalog itself.
+
+    The vision model may suggest points, but it can never invent a value the
+    catalog does not already justify for that stream.
+    """
+    bounds: dict[str, tuple[int, int]] = {}
+    for _keyword, _name, category, _instructions, points in CATALOG_SEED:
+        low, high = bounds.get(category, (points, points))
+        bounds[category] = (min(low, points), max(high, points))
+    return bounds
+
+
+def clamp_points(category: str, suggested: int | None) -> int:
+    low, high = category_point_bounds().get(
+        category, (FALLBACK_POINTS, FALLBACK_POINTS)
+    )
+    if not isinstance(suggested, int):
+        suggested = high
+    return max(low, min(high, suggested))
+
+
+def analyze_waste(
+    keyword_text: str = "",
+    image_path: str | None = None,
+    image_bytes: bytes | None = None,
+    media_type: str = "image/jpeg",
+    connection: sqlite3.Connection | None = None,
+) -> dict:
+    """Classify an item, preferring AI vision and always able to fall back.
+
+    The deterministic rules are computed first, so a vision failure degrades to
+    exactly the M2 behaviour instead of an error. Every response carries a
+    ``source`` field (``ai_vision`` or ``rules``) plus ``confidence``,
+    ``preparation_steps`` and ``why``, and — when vision was attempted but did
+    not answer — a ``vision_error`` explaining why. Clients can therefore be
+    honest about where a recommendation came from.
+    """
+    result = dict(classify_waste(keyword_text, image_path, connection=connection))
+    result.update(
+        {
+            "source": "rules",
+            "confidence": None,
+            "preparation_steps": [],
+            "why": "",
+            "ai_model": None,
+            "vision_available": vision.enabled(),
+            "vision_error": None,
+        }
+    )
+
+    if not vision.enabled():
+        return result
+
+    if not image_bytes:
+        result["vision_error"] = "no image supplied; filename and preset rules used"
+        return result
+
+    try:
+        analysis = vision.analyze_image(image_bytes, media_type)
+    except vision.VisionError as error:
+        # Expected failure (no key, timeout, bad payload): fall back quietly to
+        # the rules answer, but tell the client why.
+        result["vision_error"] = str(error)
+        return result
+    except Exception as error:  # noqa: BLE001 - a bug in the analyser must not 500 a scan
+        app.logger.warning("vision analysis crashed: %s", error, exc_info=True)
+        result["vision_error"] = f"vision analysis failed ({type(error).__name__})"
+        return result
+
+    # Defence in depth: the analyser validates its own output, but this
+    # boundary must not trust a callee to have done so. An unknown category
+    # here would be a KeyError -> HTTP 500 on a user's scan.
+    category = analysis.get("category")
+    steps = analysis.get("steps") or []
+    if category not in BIN_META or not steps:
+        result["vision_error"] = (
+            f"vision returned an unusable result (category={category!r}, "
+            f"steps={len(steps)})"
+        )
+        return result
+
+    result.update(
+        {
+            "display_name": analysis["item"],
+            "category": category,
+            "bin_color": BIN_META[category]["bin_color"],
+            "instructions": " ".join(steps),
+            "points": clamp_points(category, analysis["suggested_points"]),
+            "matched_keyword": None,
+            "fallback": False,
+            "source": "ai_vision",
+            "confidence": analysis["confidence"],
+            "preparation_steps": steps,
+            "why": analysis["why"],
+            "ai_model": vision.model(),
+        }
+    )
+    return result
+
+
+RATE_LIMIT_BUCKETS = {
+    "identify_waste": "identify",
+    "create_or_fetch_user": "general",
+    "dispose_waste": "general",
+    "complete_challenge": "general",
+}
+
+
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
 
@@ -538,6 +689,34 @@ def ensure_bootstrapped() -> None:
 @app.before_request
 def _bootstrap_once() -> None:
     ensure_bootstrapped()
+
+    bucket = RATE_LIMIT_BUCKETS.get(request.endpoint or "")
+    if bucket is None or request.method != "POST":
+        return None
+
+    client = rate_limit.client_key(
+        request.remote_addr, request.headers.get("X-Client-Id")
+    )
+    retry_after = rate_limit.limiter.hit(bucket, client)
+    if retry_after is None:
+        return None
+
+    limit = rate_limit.configured_limits().get(bucket, 0)
+    response = jsonify(
+        {
+            "error": (
+                f"Too many requests. Try again in {retry_after}s "
+                f"(limit {limit}/minute)."
+            ),
+            "bucket": bucket,
+            "limit": limit,
+            "window_seconds": rate_limit.WINDOW_SECONDS,
+            "retry_after": retry_after,
+        }
+    )
+    response.status_code = 429
+    response.headers["Retry-After"] = str(retry_after)
+    return response
 
 
 @app.after_request
@@ -639,6 +818,8 @@ def identify_waste():
     image_path = None
     image_url = None
     original_name = ""
+    image_bytes: bytes | None = None
+    media_type = "image/jpeg"
     upload = request.files.get("image")
     if upload is not None and upload.filename:
         # Classify from the ORIGINAL name. secure_filename() strips non-ASCII
@@ -647,16 +828,43 @@ def identify_waste():
         original_name = os.path.basename(upload.filename.replace("\\", "/"))
         extension = os.path.splitext(original_name)[1].lower()
         if extension in ALLOWED_IMAGE_EXTENSIONS:
+            data = upload.read()
             stored_name = secure_filename(original_name)
             stem, stored_extension = os.path.splitext(stored_name)
             if not stem or stored_extension.lower() not in ALLOWED_IMAGE_EXTENSIONS:
                 stored_name = f"upload_{uuid4().hex[:8]}{extension}"
             os.makedirs(UPLOAD_DIR, exist_ok=True)
             image_path = os.path.join(UPLOAD_DIR, stored_name)
-            upload.save(image_path)
+            with open(image_path, "wb") as handle:
+                handle.write(data)
             image_url = f"/static/uploads/{stored_name}"
+            image_bytes = data
+            media_type = MEDIA_TYPE_BY_EXTENSION.get(extension, "image/jpeg")
 
-    result = classify_waste(keyword, image_path or original_name or None)
+    # Protect the paid model call separately from the general identify budget.
+    vision_note: str | None = None
+    if image_bytes and vision.enabled():
+        retry_after = rate_limit.limiter.hit(
+            "ai_vision",
+            rate_limit.client_key(
+                request.remote_addr, request.headers.get("X-Client-Id")
+            ),
+        )
+        if retry_after is not None:
+            image_bytes = None  # rules-only answer, but still a valid one
+            vision_note = (
+                f"AI vision rate limit reached; retry in {retry_after}s. "
+                "Answered with offline rules."
+            )
+
+    result = analyze_waste(
+        keyword,
+        image_path or original_name or None,
+        image_bytes=image_bytes,
+        media_type=media_type,
+    )
+    if vision_note:
+        result["vision_error"] = vision_note
     result["image_url"] = image_url
     return jsonify(result)
 
@@ -855,6 +1063,27 @@ def leaderboard():
                 }
                 for row in campuses
             ],
+        }
+    )
+
+
+@app.get("/api/capabilities")
+def capabilities():
+    """What this instance can do, so the UI can label results honestly."""
+    return jsonify(
+        {
+            "ai_vision": vision.status(),
+            "rate_limits": rate_limit.configured_limits(),
+            "rate_limit_enabled": rate_limit.is_enabled(),
+            "categories": [
+                {
+                    "label": category,
+                    "bin_color": meta["bin_color"],
+                    "hex": meta["hex"],
+                }
+                for category, meta in BIN_META.items()
+            ],
+            "campuses": list(CAMPUSES),
         }
     )
 

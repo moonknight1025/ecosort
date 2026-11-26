@@ -19,3 +19,12 @@ Thumbs.db
 
 # Local run artefacts
 *.log
+
+# Optional browser-test tooling (tests/e2e)
+tests/e2e/node_modules/
+
+# Local configuration (never commit secrets)
+.env
+
+# Local scratch output
+.scratch/

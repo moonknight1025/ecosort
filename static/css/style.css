@@ -665,3 +665,161 @@ body {
     transition: none;
   }
 }
+
+/* --- camera capture ---------------------------------------------------- */
+
+.capability-note {
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 600;
+  display: inline-block;
+}
+
+.capability-note.is-offline {
+  background: var(--line);
+  color: var(--ink-soft);
+}
+
+.camera-card {
+  padding: 12px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.camera-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 200px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg);
+  border: 2px dashed var(--line);
+}
+
+.camera-stage.is-dragover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.camera-video,
+.capture-preview {
+  width: 100%;
+  max-height: 320px;
+  object-fit: cover;
+  display: block;
+  background: #000;
+}
+
+.camera-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 28px 16px;
+  text-align: center;
+}
+
+.camera-placeholder small {
+  color: var(--ink-soft);
+  font-size: 0.74rem;
+}
+
+.camera-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.camera-controls .btn {
+  text-align: center;
+  font-size: 0.85rem;
+}
+
+.camera-controls label.btn {
+  display: grid;
+  place-items: center;
+}
+
+.camera-status {
+  margin: 8px 0 0;
+  font-size: 0.74rem;
+  color: var(--ink-soft);
+  min-height: 1em;
+}
+
+.camera-status.is-error {
+  color: #b3261e;
+  font-weight: 600;
+}
+
+/* --- AI / rules provenance --------------------------------------------- */
+
+.source-chip {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--line);
+  color: var(--ink-soft);
+  font-size: 0.66rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.source-chip[data-source='ai_vision'] {
+  background: #1b5e20;
+  color: #fff;
+}
+
+.result-analysis {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+
+.result-confidence {
+  margin: 0 0 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-soft);
+}
+
+.result-steps {
+  margin: 0 0 8px;
+  padding-left: 20px;
+  font-size: 0.88rem;
+}
+
+.result-steps li {
+  margin-bottom: 4px;
+}
+
+.result-why {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+.result-note {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #fff4e5;
+  color: #7a4b00;
+  font-size: 0.74rem;
+}
+
+@media (max-width: 500px) {
+  .camera-controls {
+    grid-template-columns: 1fr;
+  }
+}

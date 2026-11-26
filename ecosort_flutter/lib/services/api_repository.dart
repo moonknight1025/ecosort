@@ -38,6 +38,14 @@ class ApiRepository implements EcoSortRepository {
 
   Uri _endpoint(String path) => baseUrl.resolve(path);
 
+  int _tokenCounter = 0;
+
+  /// Unique per request; the server dedupes on (user_id, client_token).
+  String _newClientToken() {
+    _tokenCounter += 1;
+    return 'flutter-${DateTime.now().microsecondsSinceEpoch}-$_tokenCounter';
+  }
+
   Exception _transportError(Object error) =>
       EcoSortBackendException('cannot reach $baseUrl ($error)');
 
@@ -52,9 +60,16 @@ class ApiRepository implements EcoSortRepository {
       } catch (_) {
         detail = response.body.isEmpty ? '' : response.body;
       }
-      throw EcoSortBackendException(
-        '$route returned ${response.statusCode}${detail.isEmpty ? '' : ': $detail'}',
-      );
+      String message =
+          '$route returned ${response.statusCode}${detail.isEmpty ? '' : ': $detail'}';
+      if (response.statusCode == 429) {
+        final String? retryAfter = response.headers['retry-after'];
+        message = detail.isEmpty ? 'Too many requests' : detail;
+        if (retryAfter != null && retryAfter.isNotEmpty) {
+          message = '$message (retry in ${retryAfter}s)';
+        }
+      }
+      throw EcoSortBackendException(message);
     }
     try {
       final dynamic body = jsonDecode(response.body);
@@ -166,15 +181,7 @@ class ApiRepository implements EcoSortRepository {
     }
 
     final Map<String, dynamic> json = await _decode(response, '/api/identify');
-    return WasteClassification(
-      displayName: (json['display_name'] as String?) ?? 'Unrecognized Item',
-      category: WasteCategory.fromLabel(json['category'] as String?),
-      instructions: (json['instructions'] as String?) ?? '',
-      points: (json['points'] as num?)?.toInt() ?? 10,
-      isFallback: (json['fallback'] as bool?) ?? false,
-      matchedKeyword: json['matched_keyword'] as String?,
-      imageUrl: json['image_url'] as String?,
-    );
+    return WasteClassification.fromApiJson(json);
   }
 
   Future<AppSnapshot> _mutate({
@@ -209,8 +216,13 @@ class ApiRepository implements EcoSortRepository {
       body: <String, dynamic>{
         'user_id': _userIds[username] ?? -1,
         'item_name': item.displayName,
+        // Sent for compatibility with the documented contract, but the server
+        // re-derives both and ignores these.
         'category': item.category.label,
         'points': item.points,
+        // The server dedupes on (user_id, client_token), so a retried disposal
+        // cannot double-credit points.
+        'client_token': _newClientToken(),
       },
       username: username,
     );

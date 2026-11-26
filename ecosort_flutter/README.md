@@ -35,6 +35,21 @@ On screens wider than 520 px the app renders inside a centred **430 px phone
 frame**; below that it is full-bleed. That shell is presentation only —
 `lib/widgets/mobile_frame.dart`, nothing below it knows.
 
+### Camera capture
+
+`Scan & Bin` offers three paths, in order of preference:
+
+1. **Start live camera** — `camera` plugin, rear lens preferred, with
+   **Capture Photo**, **Switch** and **Stop**. On web this uses
+   `getUserMedia`, so it needs a secure context (`localhost`/`127.0.0.1` or
+   https); Flutter Web served over a LAN IP will refuse and the UI says so.
+2. **Camera** — `image_picker` with `ImageSource.camera`, which on mobile
+   browsers opens the capture input directly.
+3. **Upload** — gallery/file picker, plus the six sample chips.
+
+Denied permission, no camera, or a busy device each leave the other two paths
+working; the snackbar explains what happened instead of failing silently.
+
 ### Point it at the Flask backend
 
 The app starts in **local mode**. Switch at runtime with the ⚙️ icon in the app
@@ -146,6 +161,7 @@ flutter test
 | `test/disposal_test.dart` | points + bin increment, badge unlock, persistence across a new repository over the same store, campus not mutated by a disposal, leaderboard ordering |
 | `test/challenge_test.dart` | 7 rows for a new user, +15 once, duplicate claim awards 0 (including across a fresh repository), all 7 days |
 | `test/navigation_test.dart` | three-tab navigation, Eco Points pill, sample chip → result card, toss → points + bin counter |
+| `test/api_repository_test.dart` | Flask contract: AI-vs-rules parsing, confidence/steps, multipart upload, 429 → readable error |
 
 Widget tests inject `InMemoryKeyValueStore`, so they never touch
 `shared_preferences` or the network.
@@ -162,11 +178,15 @@ Widget tests inject `InMemoryKeyValueStore`, so they never touch
 * **Image upload is filename-driven.** On web `image_picker` returns an `XFile`;
   the app classifies from `file.name` (plus a local preview from
   `Image.memory`). No pixel analysis happens, matching the offline-first rule.
-* **Backend parity is partial.** The Flask app currently implements
-  `/api/user` and `/api/identify`; `/api/dispose`,
-  `/api/challenge/complete` and `/api/leaderboard` are milestones M3/M4 there.
-  Until they land, backend mode falls back to local mode on the first disposal
-  or leaderboard call — by design, and visibly.
+* **Backend mode is now complete.** `/api/user`, `/api/identify` (including AI
+  vision), `/api/dispose`, `/api/challenge/complete` and `/api/leaderboard` all
+  exist in the Flask app. Backend mode shows AI vision results when the server
+  has a key; local mode always answers from rules and labels itself that way.
+* **Rate limits apply in backend mode only.** The Flask API answers `429` with a
+  retry hint when a bucket is exhausted; the client surfaces it as a snackbar.
+  Local mode has no limits.
+* **Live camera needs a secure context.** Flutter Web served on `localhost` is
+  fine; a LAN IP over plain http is not, and the camera card explains that.
 * **CORS.** The Flask app does not send `Access-Control-Allow-Origin`, so a
   browser backend session will fail its first request and fall back locally.
   Adding `flask-cors` (or a manual `after_request` header) is the one-line fix

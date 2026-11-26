@@ -88,16 +88,46 @@
       <main>
         <section id="tab-scan" class="panel is-active" role="tabpanel" aria-labelledby="tab-btn-scan">
           <h2 class="panel-title">Scan &amp; Bin</h2>
-          <p class="panel-hint">Drop a photo of your waste, or tap a sample item.</p>
+          <p class="panel-hint">Scan with your camera, upload a photo, or tap a sample item.</p>
+          <p class="capability-note" id="capability-note" role="status"></p>
 
-          <label class="dropzone" for="image-input" id="dropzone">
-            <span class="dropzone-icon" aria-hidden="true">&#128247;</span>
-            <span class="dropzone-copy">
-              <strong>Upload a waste photo</strong>
-              <small>JPG, PNG or WEBP &middot; classification runs on the file name</small>
-            </span>
-            <input id="image-input" name="image" type="file" accept="image/*" hidden />
-          </label>
+          <section class="camera-card" aria-label="Camera scanner">
+            <div class="camera-stage" id="dropzone">
+              <video
+                id="camera-video"
+                class="camera-video"
+                playsinline
+                muted
+                autoplay
+                hidden
+              ></video>
+              <img id="capture-preview" class="capture-preview" alt="Captured waste preview" hidden />
+              <div class="camera-placeholder" id="camera-placeholder">
+                <span class="dropzone-icon" aria-hidden="true">&#128247;</span>
+                <strong>Scan waste with your camera</strong>
+                <small>Live capture stays on this device. Drop a photo here too.</small>
+              </div>
+            </div>
+
+            <div class="camera-controls">
+              <button class="btn btn-primary" id="start-camera" type="button">Start camera</button>
+              <button class="btn" id="capture-photo" type="button" hidden>Capture Photo</button>
+              <button class="btn" id="switch-camera" type="button" hidden>Switch Camera</button>
+              <button class="btn" id="retake" type="button" hidden>Retake</button>
+              <button class="btn" id="stop-camera" type="button" hidden>Stop Camera</button>
+              <label class="btn" for="image-input">Upload photo</label>
+              <input
+                id="image-input"
+                name="image"
+                type="file"
+                accept="image/*"
+                capture="environment"
+                hidden
+              />
+            </div>
+
+            <p class="camera-status" id="camera-status" role="status" aria-live="polite"></p>
+          </section>
 
           <div class="presets" aria-label="Quick test items">
             <button class="preset" type="button" data-preset="bottle">Plastic Bottle</button>
@@ -112,9 +142,19 @@
             <header class="result-head">
               <span class="category-chip" id="result-category">Dry Waste</span>
               <span class="points-chip" id="result-points">+10 pts</span>
+              <span class="source-chip" id="result-source" hidden></span>
             </header>
             <h3 id="result-name">Scan an item to begin</h3>
             <p id="result-instructions">Disposal instructions will appear here.</p>
+
+            <div class="result-analysis" id="result-analysis" hidden>
+              <p class="result-confidence" id="result-confidence"></p>
+              <ol class="result-steps" id="result-steps"></ol>
+              <p class="result-why" id="result-why"></p>
+            </div>
+
+            <p class="result-note" id="result-note" hidden></p>
+
             <button class="btn btn-dispose" id="dispose-btn" type="button">
               Toss into Virtual Bin
             </button>

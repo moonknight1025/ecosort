@@ -15,6 +15,7 @@ actionable without a debugger.
 from __future__ import annotations
 
 import io
+import os
 import sqlite3
 import statistics
 import sys
@@ -27,6 +28,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import app as app_module  # noqa: E402  (needs sys.path first)
+import rate_limit  # noqa: E402
+import vision  # noqa: E402
 from app import app as flask_app  # noqa: E402
 
 PASSED: list[str] = []
@@ -49,6 +52,17 @@ def check(name: str, fn) -> None:
 
 
 def main() -> int:
+    # Pin the environment so an ambient .env or shell export cannot change what
+    # this suite asserts. Functional checks get generous limits; the dedicated
+    # rate-limit check tightens them and resets the counters itself.
+    for key in ("ECOSORT_AI_API_KEY", "ECOSORT_AI_ENABLED", "ECOSORT_AI_MODEL"):
+        os.environ.pop(key, None)
+    os.environ["RATE_LIMIT_ENABLED"] = "1"
+    os.environ["RATE_LIMIT_IDENTIFY_PER_MIN"] = "1000"
+    os.environ["RATE_LIMIT_AI_PER_MIN"] = "1000"
+    os.environ["RATE_LIMIT_GENERAL_PER_MIN"] = "1000"
+    rate_limit.reset_rate_limits()
+
     workdir = Path(tempfile.mkdtemp(prefix="ecosort-verify-"))
     app_module.DATABASE_PATH = str(workdir / "database.db")
     app_module.UPLOAD_DIR = str(workdir / "uploads")
@@ -310,6 +324,188 @@ def main() -> int:
         return f"identify p95 {p95:.1f} ms over 20 calls (max {max(samples):.1f} ms)"
 
     check("7e. local API latency budget", latency)
+
+    # ---------------------------------------------------------------- 8
+    def capabilities() -> str:
+        payload = client.get("/api/capabilities").get_json()
+        assert "ai_vision" in payload, "capabilities missing ai_vision"
+        assert payload["ai_vision"]["enabled"] is False, "vision should be off without a key"
+        assert payload["rate_limits"]["identify"] == 1000, "rate limits not reported"
+        assert len(payload["categories"]) == 5, "capabilities must list the five streams"
+        return f"ai_vision=off limits={payload['rate_limits']} categories=5"
+
+    check("8. capabilities reports vision + limits (secret-free)", capabilities)
+
+    # ---------------------------------------------------------------- 9
+    def rules_provenance() -> str:
+        payload = client.post(
+            "/api/identify",
+            data={"image": (io.BytesIO(b"\xff\xd8jpeg"), "plastic_bottle_01.jpg")},
+            content_type="multipart/form-data",
+        ).get_json()
+        assert payload["source"] == "rules", f"expected rules, got {payload['source']}"
+        assert payload["vision_available"] is False, "vision reported available without a key"
+        assert payload["confidence"] is None, "rule answers carry no confidence"
+        assert payload["preparation_steps"] == [], "rule answers carry no AI steps"
+        return "source=rules, vision_available=false, no confidence/steps"
+
+    check("9. identify labels rule-based answers (no API key)", rules_provenance)
+
+    # ---------------------------------------------------------------- 10
+    def ai_vision_path() -> str:
+        os.environ["ECOSORT_AI_API_KEY"] = "test-key-not-real"
+        os.environ["ECOSORT_AI_MODEL"] = "gpt-4o-mini"
+        original = vision.analyze_image
+        try:
+            vision.analyze_image = lambda image_bytes, media_type="image/jpeg", **kw: {
+                "item": "Crushed PET bottle",
+                "category": "Recyclable Waste",
+                "confidence": 0.91,
+                "steps": ["Empty and rinse", "Remove the cap", "Flatten it"],
+                "why": "PET is accepted by campus recyclers.",
+                "suggested_points": 13,
+            }
+            payload = client.post(
+                "/api/identify",
+                data={"image": (io.BytesIO(b"JPEGDATA"), "capture.jpg")},
+                content_type="multipart/form-data",
+            ).get_json()
+            assert payload["source"] == "ai_vision", f"source={payload['source']}"
+            assert payload["ai_model"] == "gpt-4o-mini", "model not reported"
+            assert payload["display_name"] == "Crushed PET bottle", "item name not used"
+            assert payload["category"] == "Recyclable Waste", "category not used"
+            assert payload["points"] == 13, f"points={payload['points']}"
+            assert payload["confidence"] == 0.91, "confidence not surfaced"
+            assert len(payload["preparation_steps"]) == 3, "steps not surfaced"
+            assert payload["why"], "why not surfaced"
+
+            # The model may suggest points, but never outside the stream's range
+            # derived from the catalog.
+            vision.analyze_image = lambda *a, **k: {
+                "item": "Bottle",
+                "category": "Recyclable Waste",
+                "confidence": 0.5,
+                "steps": ["Rinse"],
+                "why": "",
+                "suggested_points": 99999,
+            }
+            clamped = client.post(
+                "/api/identify",
+                data={"image": (io.BytesIO(b"x"), "c.jpg")},
+                content_type="multipart/form-data",
+            ).get_json()
+            assert clamped["points"] == 15, f"clamped points={clamped['points']}"
+            return "ai_vision + clamp 99999 -> 15"
+        finally:
+            vision.analyze_image = original
+            os.environ.pop("ECOSORT_AI_API_KEY", None)
+
+    check("10. AI vision answer is mapped, clamped and labelled", ai_vision_path)
+
+    # ---------------------------------------------------------------- 11
+    def ai_failure_degrades() -> str:
+        os.environ["ECOSORT_AI_API_KEY"] = "test-key-not-real"
+        original = vision.analyze_image
+        try:
+            def broken(*args, **kwargs):
+                raise vision.VisionError("vision API returned HTTP 401 unauthorized")
+
+            vision.analyze_image = broken
+            response = client.post(
+                "/api/identify",
+                data={"image": (io.BytesIO(b"x"), "battery.jpg")},
+                content_type="multipart/form-data",
+            )
+            payload = response.get_json()
+            assert response.status_code == 200, f"status {response.status_code}"
+            assert payload["source"] == "rules", "did not fall back to rules"
+            assert payload["category"] == "Hazardous Waste", "fallback lost the filename signal"
+            assert "401" in (payload["vision_error"] or ""), "vision_error not surfaced"
+
+            # A crash inside the analyser must not 500 the scan flow.
+            def crash(*args, **kwargs):
+                raise AttributeError("bug in analyser")
+
+            vision.analyze_image = crash
+            crash_response = client.post(
+                "/api/identify",
+                data={"image": (io.BytesIO(b"x"), "box.jpg")},
+                content_type="multipart/form-data",
+            )
+            assert crash_response.status_code == 200, "analyser crash became a 500"
+
+            # An unknown category from the model is rejected at the boundary.
+            vision.analyze_image = lambda *a, **k: {
+                "item": "Mystery",
+                "category": "Compost",
+                "confidence": 0.4,
+                "steps": ["Do something"],
+                "why": "",
+                "suggested_points": 10,
+            }
+            unknown = client.post(
+                "/api/identify",
+                data={"image": (io.BytesIO(b"x"), "box.jpg")},
+                content_type="multipart/form-data",
+            ).get_json()
+            assert unknown["source"] == "rules", "unknown category was trusted"
+            assert unknown["category"] == "Recyclable Waste", "fallback answer wrong"
+            return "401, analyser crash and unknown category all degrade to rules"
+        finally:
+            vision.analyze_image = original
+            os.environ.pop("ECOSORT_AI_API_KEY", None)
+
+    check("11. vision failures and bad answers fall back, never 500", ai_failure_degrades)
+
+    # ---------------------------------------------------------------- 12
+    def rate_limiting() -> str:
+        os.environ["RATE_LIMIT_IDENTIFY_PER_MIN"] = "2"
+        rate_limit.reset_rate_limits()
+        try:
+            allowed = [
+                client.post("/api/identify", data={"preset_keyword": "bottle"}).status_code
+                for _ in range(2)
+            ]
+            assert allowed == [200, 200], f"expected 200s within the limit, got {allowed}"
+
+            blocked = client.post("/api/identify", data={"preset_keyword": "bottle"})
+            assert blocked.status_code == 429, f"expected 429, got {blocked.status_code}"
+            body = blocked.get_json()
+            assert body["bucket"] == "identify", "429 did not name the bucket"
+            assert body["limit"] == 2, "429 did not report the limit"
+            assert isinstance(body["retry_after"], int), "429 missing retry_after"
+            header = blocked.headers.get("Retry-After")
+            assert header == str(body["retry_after"]), "Retry-After header mismatch"
+            assert "Too many requests" in body["error"], "429 message not friendly"
+
+            # A different bucket is unaffected by the identify limit.
+            assert (
+                client.post("/api/user", json={"username": "RateLimitUser"}).status_code
+                == 200
+            ), "general bucket was wrongly throttled by an identify limit"
+
+            # Reset restores service, which is what isolated suites rely on.
+            rate_limit.reset_rate_limits()
+            assert (
+                client.post("/api/identify", data={"preset_keyword": "bottle"}).status_code
+                == 200
+            ), "reset did not clear the window"
+
+            # The kill switch disables enforcement entirely.
+            os.environ["RATE_LIMIT_ENABLED"] = "0"
+            rate_limit.reset_rate_limits()
+            open_codes = [
+                client.post("/api/identify", data={"preset_keyword": "bottle"}).status_code
+                for _ in range(4)
+            ]
+            assert open_codes == [200, 200, 200, 200], f"kill switch failed: {open_codes}"
+            return "2x200 then 429+Retry-After, other buckets unaffected, reset works"
+        finally:
+            os.environ["RATE_LIMIT_ENABLED"] = "1"
+            os.environ["RATE_LIMIT_IDENTIFY_PER_MIN"] = "1000"
+            rate_limit.reset_rate_limits()
+
+    check("12. rate limiting: 429 + Retry-After + reset + kill switch", rate_limiting)
 
     # ---------------------------------------------------------------- summary
     print(f"\n{len(PASSED)} passed, {len(FAILED)} failed")

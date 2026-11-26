@@ -212,9 +212,21 @@ class LocalRepository implements EcoSortRepository {
     String? imageName,
     List<int>? imageBytes,
   }) async {
-    return _classifier.classify(
+    // Local mode has no model: it always answers from the deterministic rules
+    // and says so, so the UI never implies AI ran offline.
+    final WasteClassification rules = _classifier.classify(
       presetKeyword: presetKeyword,
       imageName: imageName,
+    );
+    return WasteClassification(
+      displayName: rules.displayName,
+      category: rules.category,
+      instructions: rules.instructions,
+      points: rules.points,
+      isFallback: rules.isFallback,
+      matchedKeyword: rules.matchedKeyword,
+      source: ClassificationSource.rules,
+      visionError: 'Local mode: AI vision needs the Flask backend with an API key.',
     );
   }
 
