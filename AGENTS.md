@@ -4,7 +4,7 @@ Instructions for any coding agent working in this repository. Read this file
 before your first edit; it narrows what the PRD allows and records what is
 already built.
 
-Status: current · Owner: Pi Agent · Milestone: M1 complete, M2 next.
+Status: current · Owner: Pi Agent · Milestone: M2 complete, M3 next.
 
 ## 1. What this project is
 
@@ -72,6 +72,15 @@ Scoring: each disposal adds the catalog item's points; each first-time claim of
 a challenge day adds `+15`. Badges are computed from `disposal_logs` and
 `users.eco_points`, never stored as a flag.
 
+The classifier's matching rule is **token-first** (`_match_score` in `app.py`): a
+keyword matches only as a whole token, or as a substring once the keyword is at
+least `MIN_SUBSTRING_KEYWORD_LENGTH` (5) characters. That is what stops the
+3-character `med` keyword from firing on `media_player.png`. Want a new everyday
+word (`medicine`, `laptop`, `earbuds`)? Add it to `CATALOG_ALIASES`, not to
+`CATALOG_SEED` — aliases keep the 13-row contract intact. Do not "simplify" the
+classifier back to a bare substring search; the regression cases are recorded in
+the PR #6 review comment.
+
 ## 5. Schema (four tables, do not add a fifth)
 
 - `users(id, username UNIQUE, campus, eco_points, streak_days)`
@@ -102,8 +111,8 @@ python tests/verify_api.py
 | Milestone | Scope | Gate |
 | --- | --- | --- |
 | **M1 — done** | scaffold, SQLite bootstrap, seed data, 3-tab shell | `GET /` = 200; 13 catalog rows + 4 users after two boots |
-| M2 — next | `/api/user`, `/api/identify`, classifier helper, scan UI | preset/upload/fallback classification < 300 ms |
-| M3 | `/api/dispose`, result card wiring, virtual bins, toasts | log row + score + bin count persist across reload |
+| **M2 — done** | `/api/user`, `/api/identify`, `classify_waste()`, scan UI | preset/upload/fallback classification < 300 ms |
+| M3 — next | `/api/dispose`, result card wiring, virtual bins, toasts | log row + score + bin count persist across reload |
 | M4 | badges, `/api/challenge/complete`, `/api/leaderboard` | badge unlock, +15 once, campus totals |
 | M5 | `tests/verify_api.py`, 375 px audit, demo script | 100 % pass, no horizontal overflow |
 
@@ -112,19 +121,51 @@ Milestone drafts ready to become GitHub issues live in
 PRs without human approval — the remote is `moonknight1025/ecosort` and the
 `gh` CLI is currently unauthenticated.
 
-## 8. Known gaps at M1 (honest status)
+## 8. Implemented API surface
 
-- `POST /api/user`, `/api/identify`, `/api/dispose`, `/api/challenge/complete`
-  and `GET /api/leaderboard` **do not exist yet**. The UI controls that need
-  them are wired to an explanatory toast, not to a fake success path.
-- Badges always render locked; nothing evaluates them until M4.
-- The profile bar persists to `localStorage` only; it does not reach SQLite
-  until M2.
-- `tests/verify_api.py` does not exist yet; it is an M5 deliverable.
+| Route | Body | Returns |
+| --- | --- | --- |
+| `GET /` | — | the single-page shell |
+| `POST /api/user` | `{username, campus}` | `{user, badges, challenges, bin_counts}` |
+| `POST /api/identify` | multipart `image` and/or `preset_keyword` | `{display_name, category, bin_color, instructions, points, matched_keyword, fallback, image_url}` |
+
+Still missing: `POST /api/dispose` (M3), `POST /api/challenge/complete` and
+`GET /api/leaderboard` (M4).
+
+`classify_waste(keyword_text, image_path=None)` is the only place waste is
+classified. Replace its body with a vision call later; do not move matching
+into a route.
+
+## 9. Known gaps at M2 (honest status)
+
+- `POST /api/dispose`, `POST /api/challenge/complete` and
+  `GET /api/leaderboard` **do not exist yet**. The "Toss into Virtual Bin" CTA
+  and the challenge buttons explain that instead of faking success.
+- `POST /api/dispose` must **not** trust the client's `points`/`category` from
+  the PRD contract; M3 re-derives both from `waste_catalog`. It also needs a
+  `client_token` with `UNIQUE(user_id, client_token)` — a disabled button is not
+  an idempotency guard.
+- The challenge claim must be one conditional
+  `UPDATE ... WHERE completed = 0` plus a `rowcount` check, or two concurrent
+  claims raise `IntegrityError` and return 500 instead of +0.
+- `streak_days` still exists in the `users` table but is **no longer returned**
+  by `/api/user` until M4 actually writes it. Implement it there or drop the
+  column.
+- The badge evaluator already ships (two M2 responses are contractually
+  required to return `badges`, so it could not be deferred), but nothing can
+  unlock a badge until M3 writes to `disposal_logs`.
+- `tests/verify_api.py` is still an M5 deliverable. M1/M2 gates were verified
+  with the Flask test client run ad hoc — see the commit messages for output.
+  For isolation, point `app.DATABASE_PATH` at a temp file and set
+  `app._bootstrapped = False` before the first request.
+- Uploaded files keep their sanitized original name, so re-uploading the same
+  file overwrites it; non-ASCII names fall back to `upload_<hex8><ext>`.
+- Browser console cleanliness and the 375 px layout remain **unverified** — no
+  headless browser is installed here.
 - `database.db` and `static/uploads/*` are gitignored generated state, not
   source.
 
-## 9. Style
+## 10. Style
 
 - Python: 4-space indent, typed public helpers, docstrings that state why.
 - Every mutation route validates input and returns JSON errors, never HTML.

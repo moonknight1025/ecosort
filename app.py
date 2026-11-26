@@ -1,20 +1,23 @@
 """EcoSort - gamified waste segregation MVP.
 
-Milestone 1 scope: directory scaffold, idempotent SQLite bootstrap (four tables +
-canonical seed data) and the responsive three-tab UI shell.
+Owns the idempotent SQLite bootstrap (four tables + canonical seed data), the
+deterministic classifier seam, and the profile/identify routes. Disposal,
+challenge claims and leaderboards arrive in M3/M4.
 
-Behaviours owned here so far:
-  * ``GET /``  -> renders ``templates/index.html``
-Run directly (``python app.py``) or via ``flask --app app run``; importing the
-module also bootstraps the database, so both entry points behave identically.
+Run directly (``python app.py``) or via ``flask --app app run``. The database is
+bootstrapped on the first request (not at import time), so importing this module
+never touches disk.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
+from uuid import uuid4
 
-from flask import Flask, g, render_template
+from flask import Flask, g, jsonify, render_template, request
+from werkzeug.utils import secure_filename
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE_PATH = os.path.join(BASE_DIR, "database.db")
@@ -33,6 +36,38 @@ BIN_META = {
 
 FALLBACK_CATEGORY = "Dry Waste"
 FALLBACK_POINTS = 10
+FALLBACK_INSTRUCTIONS = (
+    "We could not match this item to a known stream. Bag it and drop it in the "
+    "gray dry-waste bin; a campus volunteer will re-sort it."
+)
+
+# Badge rules (PRD 4.2) expressed as category groups, so the SQL below never
+# re-types the canonical category literals.
+PLASTIC_CATEGORIES = ("Recyclable Waste", "Dry Waste")
+HAZARD_CATEGORIES = ("E-Waste", "Hazardous Waste")
+
+ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+MAX_USERNAME_LENGTH = 32
+
+# Matching rules for the classifier. A catalog keyword matches only as a whole
+# token (so "med" cannot fire on "media_player.png") or as a substring of the
+# raw text when the keyword is long enough to be unambiguous (so "paper" still
+# matches "newspaper.jpg"). Aliases let everyday words resolve to a seeded
+# keyword without inflating the 13-row catalog.
+MIN_SUBSTRING_KEYWORD_LENGTH = 5
+CATALOG_ALIASES = {
+    "medicine": "med",
+    "medicines": "med",
+    "medication": "med",
+    "meds": "med",
+    "pills": "med",
+    "earbuds": "phone",
+    "laptop": "phone",
+    "mobile": "phone",
+    "smartphone": "phone",
+}
+_TOKEN_SPLITTER = re.compile(r"[^a-z0-9]+")
 
 # (keyword, display_name, category, instructions, points)
 CATALOG_SEED: list[tuple[str, str, str, str, int]] = [
@@ -207,6 +242,9 @@ CREATE TABLE IF NOT EXISTS user_challenges (
     completed  INTEGER DEFAULT 0,
     UNIQUE (user_id, day_number)
 );
+
+-- Every badge, bin count and leaderboard query filters on this column.
+CREATE INDEX IF NOT EXISTS idx_disposal_user ON disposal_logs(user_id);
 """
 
 
@@ -219,6 +257,28 @@ def catalog_rows() -> list[tuple[str, str, str, str, str, int]]:
     return rows
 
 
+def validate_domain_constants() -> None:
+    """Catch literal drift before it reaches the database.
+
+    Raised, never asserted: ``python -O`` strips asserts, and a silently
+    disabled contract check is worse than a loud startup failure.
+    """
+    groups = set(PLASTIC_CATEGORIES) | set(HAZARD_CATEGORIES)
+    unknown_groups = groups - set(BIN_META)
+    if unknown_groups:
+        raise ValueError(
+            f"badge groups reference unknown categories: {sorted(unknown_groups)}"
+        )
+
+    unknown_seed = {row[2] for row in CATALOG_SEED} - set(BIN_META)
+    if unknown_seed:
+        raise ValueError(f"catalog seed uses unknown categories: {sorted(unknown_seed)}")
+
+    orphan_aliases = set(CATALOG_ALIASES.values()) - {row[0] for row in CATALOG_SEED}
+    if orphan_aliases:
+        raise ValueError(f"aliases point at missing keywords: {sorted(orphan_aliases)}")
+
+
 def init_db(database_path: str = DATABASE_PATH) -> None:
     """Create the upload directory, the schema and the seed rows.
 
@@ -227,6 +287,7 @@ def init_db(database_path: str = DATABASE_PATH) -> None:
     run writes nothing and never raises.
     """
     os.makedirs(UPLOAD_DIR, exist_ok=True)
+    validate_domain_constants()
 
     connection = sqlite3.connect(database_path)
     try:
@@ -268,7 +329,187 @@ def get_db() -> sqlite3.Connection:
     return g.db
 
 
+def user_payload(row: sqlite3.Row) -> dict:
+    """Shape a ``users`` row for the JSON contract.
+
+    ``streak_days`` is deliberately absent until M4 actually writes it: a field
+    that always reports ``1`` is a lie the UI would eventually trust.
+    """
+    return {
+        "id": row["id"],
+        "username": row["username"],
+        "campus": row["campus"],
+        "eco_points": row["eco_points"],
+    }
+
+
+def ensure_challenge_rows(connection: sqlite3.Connection, user_id: int) -> None:
+    """Give a user one challenge row per day; UNIQUE(user_id, day_number) dedupes."""
+    connection.executemany(
+        "INSERT OR IGNORE INTO user_challenges (user_id, day_number, completed) VALUES (?, ?, 0)",
+        [(user_id, day_number) for day_number in CHALLENGE_TASKS],
+    )
+
+
+def challenge_payload(connection: sqlite3.Connection, user_id: int) -> list[dict]:
+    rows = connection.execute(
+        "SELECT day_number, completed FROM user_challenges WHERE user_id = ? "
+        "ORDER BY day_number",
+        (user_id,),
+    ).fetchall()
+    return [
+        {
+            "day_number": row["day_number"],
+            "completed": bool(row["completed"]),
+            "task": CHALLENGE_TASKS.get(row["day_number"], ""),
+        }
+        for row in rows
+    ]
+
+
+def bin_counts_for(connection: sqlite3.Connection, user_id: int) -> dict[str, int]:
+    """Disposal count per bin for one user; every category is always present."""
+    counts = {category: 0 for category in BIN_META}
+    rows = connection.execute(
+        "SELECT category, COUNT(*) AS total FROM disposal_logs WHERE user_id = ? "
+        "GROUP BY category",
+        (user_id,),
+    ).fetchall()
+    for row in rows:
+        if row["category"] in counts:
+            counts[row["category"]] = row["total"]
+    return counts
+
+
+def badge_states(
+    connection: sqlite3.Connection, user_id: int, eco_points: int
+) -> list[dict]:
+    """Evaluate the four badges from the logs, never from a stored flag."""
+    row = connection.execute(
+        """
+        SELECT
+            COUNT(*) AS total,
+            COALESCE(SUM(category IN (?, ?)), 0) AS plastic,
+            COALESCE(SUM(category IN (?, ?)), 0) AS hazard
+        FROM disposal_logs
+        WHERE user_id = ?
+        """,
+        (*PLASTIC_CATEGORIES, *HAZARD_CATEGORIES, user_id),
+    ).fetchone()
+
+    unlocked = {
+        "first_step": row["total"] >= 1,
+        "plastic_warrior": row["plastic"] >= 3,
+        "hazard_hero": row["hazard"] >= 1,
+        "green_champion": eco_points >= 100,
+    }
+    return [
+        {
+            "id": badge_id,
+            "name": name,
+            "requirement": requirement,
+            "unlocked": unlocked[badge_id],
+        }
+        for badge_id, name, requirement in BADGES
+    ]
+
+
+def _match_score(keyword: str, tokens: set[str], haystack: str) -> int:
+    """Rank one keyword against the input; 0 means no match.
+
+    Whole-token matches outrank substring matches, and longer keywords outrank
+    shorter ones, so the winner is deterministic.
+    """
+    lowered = keyword.lower()
+    if lowered in tokens:
+        return 1000 + len(lowered)
+    if len(lowered) >= MIN_SUBSTRING_KEYWORD_LENGTH and lowered in haystack:
+        return len(lowered)
+    return 0
+
+
+def classify_waste(
+    keyword_text: str = "",
+    image_path: str | None = None,
+    connection: sqlite3.Connection | None = None,
+) -> dict:
+    """Classify waste from a preset keyword and/or an uploaded file name.
+
+    Deterministic, offline, and the single seam for a future vision model: the
+    body can be swapped for a model call without changing the route signature,
+    the JSON contract, or any SQL.
+
+    Matching is token-first over ``waste_catalog.keyword`` (see
+    ``_match_score``), which is what stops the 3-character ``med`` keyword from
+    firing on ``media_player.png``. Only the basename of ``image_path`` is
+    considered, so callers may pass either a stored path or the original
+    uploaded filename - the latter is preferred, because sanitising a non-ASCII
+    name destroys the only signal it carries.
+
+    ``connection`` is optional so the helper can be unit-tested without a Flask
+    app context.
+    """
+    haystack = " ".join(
+        part for part in (keyword_text, os.path.basename(image_path or "")) if part
+    ).lower()
+    tokens = {token for token in _TOKEN_SPLITTER.split(haystack) if token}
+    tokens |= {CATALOG_ALIASES[token] for token in tokens if token in CATALOG_ALIASES}
+
+    db = connection if connection is not None else get_db()
+    rows = db.execute(
+        "SELECT keyword, display_name, category, bin_color, instructions, points "
+        "FROM waste_catalog"
+    ).fetchall()
+
+    scored = [
+        (_match_score(row["keyword"], tokens, haystack), row["keyword"], row)
+        for row in rows
+    ]
+    matches = [entry for entry in scored if entry[0] > 0]
+
+    if matches:
+        _score, _keyword, best = max(matches, key=lambda entry: (entry[0], entry[1]))
+        return {
+            "display_name": best["display_name"],
+            "category": best["category"],
+            "bin_color": best["bin_color"],
+            "instructions": best["instructions"],
+            "points": best["points"],
+            "matched_keyword": best["keyword"],
+            "fallback": False,
+        }
+
+    fallback = BIN_META[FALLBACK_CATEGORY]
+    return {
+        "display_name": "Unrecognized Item",
+        "category": FALLBACK_CATEGORY,
+        "bin_color": fallback["bin_color"],
+        "instructions": FALLBACK_INSTRUCTIONS,
+        "points": FALLBACK_POINTS,
+        "matched_keyword": None,
+        "fallback": True,
+    }
+
+
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
+
+# Bootstrap runs on the first request, not at import time: importing this module
+# (a WSGI server, a test, an REPL) must not mutate disk. The flag keeps the check
+# to a boolean once the database exists.
+_bootstrapped = False
+
+
+def ensure_bootstrapped() -> None:
+    global _bootstrapped
+    if not _bootstrapped:
+        init_db()
+        _bootstrapped = True
+
+
+@app.before_request
+def _bootstrap_once() -> None:
+    ensure_bootstrapped()
 
 
 @app.teardown_appcontext
@@ -276,6 +517,105 @@ def close_db(_exception: BaseException | None = None) -> None:
     connection = g.pop("db", None)
     if connection is not None:
         connection.close()
+
+
+@app.errorhandler(413)
+def upload_too_large(_error):
+    """Keep oversized uploads a JSON 413 instead of Flask's HTML default."""
+    limit_mb = MAX_UPLOAD_BYTES // (1024 * 1024)
+    return jsonify({"error": f"image exceeds the {limit_mb} MB limit", "fallback": True}), 413
+
+
+@app.post("/api/user")
+def create_or_fetch_user():
+    """Create a profile or return the existing one, then initialise its state.
+
+    Idempotent by design: a repeat call for a known username preserves
+    ``eco_points`` and the challenge rows, and only refreshes the campus.
+    """
+    payload = request.get_json(silent=True)
+    if payload is None and request.get_data(cache=True):
+        return jsonify({"error": "invalid JSON body"}), 400
+    if not isinstance(payload, dict):
+        payload = {}
+
+    username = str(payload.get("username") or "").strip()
+    if not username:
+        return jsonify({"error": "username is required"}), 400
+    if len(username) > MAX_USERNAME_LENGTH:
+        return (
+            jsonify(
+                {"error": f"username must be {MAX_USERNAME_LENGTH} characters or fewer"}
+            ),
+            400,
+        )
+
+    campus = str(payload.get("campus") or "").strip() or "Main Campus"
+    if campus not in CAMPUSES:
+        # Never silently coerce: a typo'd campus would otherwise disappear into
+        # the Main Campus total without the client ever knowing.
+        return jsonify({"error": "unknown campus", "allowed": list(CAMPUSES)}), 400
+
+    db = get_db()
+    row = db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+    if row is None:
+        db.execute(
+            "INSERT INTO users (username, campus) VALUES (?, ?)", (username, campus)
+        )
+        db.commit()
+        row = db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+    elif campus != row["campus"]:
+        db.execute("UPDATE users SET campus = ? WHERE id = ?", (campus, row["id"]))
+        db.commit()
+        row = db.execute("SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone()
+
+    ensure_challenge_rows(db, row["id"])
+    db.commit()
+
+    return jsonify(
+        {
+            "user": user_payload(row),
+            "badges": badge_states(db, row["id"], row["eco_points"]),
+            "challenges": challenge_payload(db, row["id"]),
+            "bin_counts": bin_counts_for(db, row["id"]),
+        }
+    )
+
+
+@app.post("/api/identify")
+def identify_waste():
+    """Classify a preset keyword and/or an uploaded image file name.
+
+    Every unmatched, empty or rejected input still resolves to the Dry Waste
+    fallback with HTTP 200 - the PRD forbids a 500 on bad uploads.
+    """
+    keyword = str(
+        request.form.get("preset_keyword") or request.form.get("keyword") or ""
+    ).strip()
+
+    image_path = None
+    image_url = None
+    original_name = ""
+    upload = request.files.get("image")
+    if upload is not None and upload.filename:
+        # Classify from the ORIGINAL name. secure_filename() strips non-ASCII
+        # characters wholesale (a Tamil name collapses to "jpg"), so sanitising
+        # before classifying would throw away the only signal we have.
+        original_name = os.path.basename(upload.filename.replace("\\", "/"))
+        extension = os.path.splitext(original_name)[1].lower()
+        if extension in ALLOWED_IMAGE_EXTENSIONS:
+            stored_name = secure_filename(original_name)
+            stem, stored_extension = os.path.splitext(stored_name)
+            if not stem or stored_extension.lower() not in ALLOWED_IMAGE_EXTENSIONS:
+                stored_name = f"upload_{uuid4().hex[:8]}{extension}"
+            os.makedirs(UPLOAD_DIR, exist_ok=True)
+            image_path = os.path.join(UPLOAD_DIR, stored_name)
+            upload.save(image_path)
+            image_url = f"/static/uploads/{stored_name}"
+
+    result = classify_waste(keyword, image_path or original_name or None)
+    result["image_url"] = image_url
+    return jsonify(result)
 
 
 @app.route("/")
@@ -300,7 +640,6 @@ def index():
     )
 
 
-init_db()
-
 if __name__ == "__main__":
+    ensure_bootstrapped()
     app.run(host="127.0.0.1", port=5000, debug=False)
