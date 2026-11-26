@@ -19,7 +19,7 @@ Environment variables:
 
 ======================  =====================================================
 GEMINI_API_KEY          API key. Unset => offline fallback (no fake AI labels)
-GEMINI_MODEL            default ``gemini-2.5-flash``
+GEMINI_MODEL            default ``gemini-3.5-flash-lite``
 GEMINI_TIMEOUT_SECONDS  default ``20``
 ======================  =====================================================
 """
@@ -42,7 +42,11 @@ except ImportError:  # pragma: no cover - exercised only without the dependency
     Field = None  # type: ignore[assignment]
     GENAI_AVAILABLE = False
 
-DEFAULT_MODEL = "gemini-2.5-flash"
+# Verified against a live free-tier key on 2026-11-26: gemini-2.5-flash is
+# retired (404 "no longer available to new users"), the gemini-3.x/4.x premium
+# flash models answered 503/429 on this quota, and gemini-3.5-flash-lite
+# answered correctly. Override with GEMINI_MODEL.
+DEFAULT_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_TIMEOUT_SECONDS = 20.0
 MAX_IMAGE_BYTES = 6 * 1024 * 1024
 

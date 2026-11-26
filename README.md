@@ -71,14 +71,24 @@ export GEMINI_API_KEY="your-key-from-aistudio.google.com/apikey"
 python app.py
 ```
 
-Get a key at <https://aistudio.google.com/apikey>. `.env` is parsed by a small
+Get a key at <https://aistudio.google.com/apikey>.
+
+**Model names churn.** `gemini-2.5-flash` now answers `404 no longer available to
+new users`; on a free-tier key the `gemini-3.x`/`gemini-4.x` premium flash models
+returned `503`/`429` while **`gemini-3.5-flash-lite` answered correctly**. The
+default reflects what actually worked, not what was newest. If your key behaves
+differently, set `GEMINI_MODEL` and confirm with:
+
+```bash
+python tests/live_vision_check.py path/to/photo.jpg   # prints the real AI answer
+``` `.env` is parsed by a small
 stdlib loader in `app.py` (no `python-dotenv`), and real environment variables
 always override the file.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | *(unset — vision off)* | API key, env only |
-| `GEMINI_MODEL` | `gemini-2.5-flash` | any vision-capable Gemini model |
+| `GEMINI_MODEL` | `gemini-3.5-flash-lite` | any vision-capable Gemini model that your key can actually use |
 | `GEMINI_TIMEOUT_SECONDS` | `20` | hard per-request timeout |
 
 **No key means no fake labels.** Without a key the app never contacts Google,
@@ -110,7 +120,7 @@ The model is asked for exactly this schema:
   "points": 15,
   "analysis_mode": "ai_vision",
   "source": "ai_vision",
-  "ai_model": "gemini-2.5-flash",
+  "ai_model": "gemini-3.5-flash-lite",
   "vision_provider": "google-genai",
   "vision_error": null,
   "local_note": "Rules vary by municipality — check your local waste collection guidance...",
