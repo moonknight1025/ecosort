@@ -3,7 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import '../services/ecosort_controller.dart';
 import '../widgets/leaderboard_cards.dart';
 
-/// Tab 3 — Campus Rank: campus battle above the individual leaderboard.
+/// Tab 3 — Leaderboards: everyone first, then community/group standings.
 class RankTab extends StatelessWidget {
   const RankTab({super.key, required this.controller});
 
@@ -20,7 +20,7 @@ class RankTab extends StatelessWidget {
             children: <Widget>[
               Expanded(
                 child: Text(
-                  'Campus Cleanliness Battle',
+                  'Top Eco Contributors',
                   style: Theme.of(context)
                       .textTheme
                       .titleLarge
@@ -34,18 +34,28 @@ class RankTab extends StatelessWidget {
               ),
             ],
           ),
+          const SizedBox(height: 4),
+          Text(
+            'Everyone, everywhere — ranked by Eco Points.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
           const SizedBox(height: 8),
-          CampusStandingsCard(standings: controller.campusStandings),
+          TopUsersCard(entries: controller.topUsers),
           const SizedBox(height: 24),
           Text(
-            'Top Eco Warriors',
+            'Community & Group Standings',
             style: Theme.of(context)
                 .textTheme
                 .titleLarge
                 ?.copyWith(fontWeight: FontWeight.w800),
           ),
+          const SizedBox(height: 4),
+          Text(
+            'Households, streets, societies, offices — any group can compete.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
           const SizedBox(height: 8),
-          TopUsersCard(entries: controller.topUsers),
+          GroupStandingsCard(standings: controller.groupStandings),
         ],
       ),
     );

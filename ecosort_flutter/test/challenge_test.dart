@@ -14,7 +14,7 @@ void main() {
 
   test('seven challenge days are created uncompleted for a new user', () async {
     final snapshot =
-        await repository.loadProfile(username: 'You', campus: 'Main Campus');
+        await repository.loadProfile(username: 'You', groupName: 'General Community', city: 'Local Area');
     expect(snapshot.challenges.length, 7);
     expect(snapshot.challenges.every((day) => !day.completed), isTrue);
     expect(snapshot.challenges.first.dayNumber, 1);
@@ -22,7 +22,7 @@ void main() {
   });
 
   test('claiming day 1 awards +15 once', () async {
-    await repository.loadProfile(username: 'You', campus: 'Main Campus');
+    await repository.loadProfile(username: 'You', groupName: 'General Community', city: 'Local Area');
     final first = await repository.claimChallenge(username: 'You', day: 1);
 
     expect(first.user.ecoPoints, 15);
@@ -31,7 +31,7 @@ void main() {
   });
 
   test('a duplicate claim awards nothing and keeps the day completed', () async {
-    await repository.loadProfile(username: 'You', campus: 'Main Campus');
+    await repository.loadProfile(username: 'You', groupName: 'General Community', city: 'Local Area');
     final first = await repository.claimChallenge(username: 'You', day: 1);
     final second = await repository.claimChallenge(username: 'You', day: 1);
     final third = await repository.claimChallenge(username: 'You', day: 1);
@@ -43,7 +43,7 @@ void main() {
   });
 
   test('the duplicate-claim guard survives a fresh repository', () async {
-    await repository.loadProfile(username: 'You', campus: 'Main Campus');
+    await repository.loadProfile(username: 'You', groupName: 'General Community', city: 'Local Area');
     await repository.claimChallenge(username: 'You', day: 2);
 
     final LocalRepository reloaded = LocalRepository(store: store);
@@ -57,12 +57,12 @@ void main() {
   });
 
   test('all seven days can be claimed, totalling 7 x 15 points', () async {
-    await repository.loadProfile(username: 'You', campus: 'Main Campus');
+    await repository.loadProfile(username: 'You', groupName: 'General Community', city: 'Local Area');
     for (int day = 1; day <= 7; day++) {
       await repository.claimChallenge(username: 'You', day: day);
     }
     final snapshot =
-        await repository.loadProfile(username: 'You', campus: 'Main Campus');
+        await repository.loadProfile(username: 'You', groupName: 'General Community', city: 'Local Area');
 
     expect(snapshot.claimedDays, 7);
     expect(snapshot.user.ecoPoints, challengeReward * 7);

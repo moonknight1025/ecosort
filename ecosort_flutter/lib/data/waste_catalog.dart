@@ -26,7 +26,7 @@ const List<CatalogEntry> wasteCatalog = <CatalogEntry>[
     category: WasteCategory.wet,
     instructions:
         'Drop it in the green wet-waste bin, ideally loose rather than in a '
-        'plastic bag, so the campus compost pile can take it.',
+        'plastic bag, so the community compost pile can take it.',
     points: 10,
   ),
   CatalogEntry(

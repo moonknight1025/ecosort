@@ -2,7 +2,11 @@
 
 Mobile-first Material 3 waste-segregation game: scan or tap an item, get
 disposal guidance, toss it into a virtual bin, earn Eco Points, unlock badges,
-run the 7-day challenge, and climb the campus leaderboard.
+run the 7-day challenge, and climb the leaderboards.
+
+Universal, not campus-only: a profile is a name plus a free-text **community /
+group** (`Home & Family`, `My Flat 4B`, `Ward 7`…) and **city / region**. The
+presets are suggestions; both fields accept anything.
 
 Runs with **zero external dependencies** by default (local mode + deterministic
 classifier) and can talk to the Flask backend in the sibling `ecosort`
@@ -130,8 +134,9 @@ Swapping local for Flask is a constructor change, not a UI change.
 
 Badges: `First Step` (≥1 disposal), `Plastic Warrior` (≥3 recyclable/dry),
 `Hazard Hero` (≥1 e-waste/hazardous), `Green Champion` (≥100 pts). Challenge:
-+15 once per day. Campuses: North Campus, South Hostel, Science Block, Main
-Campus.
++15 once per day. Groups (suggestions): General Community, Home & Family, Neighborhood / Ward,
+Apartment Society, Workplace / Office. Cities (suggestions): Local Area, Chennai,
+Coimbatore, Madurai, Bengaluru, Mumbai, Delhi.
 
 ### Classification
 

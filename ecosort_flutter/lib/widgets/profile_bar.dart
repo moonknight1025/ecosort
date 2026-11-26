@@ -11,14 +11,22 @@ class ProfileBar extends StatefulWidget {
   const ProfileBar({
     super.key,
     required this.initialUsername,
-    required this.initialCampus,
+    required this.initialGroup,
+    required this.initialCity,
     required this.onSubmit,
     this.busy = false,
   });
 
   final String initialUsername;
-  final String initialCampus;
-  final void Function(String username, String campus) onSubmit;
+
+  /// Community / group: any household, street, society or office. The presets
+  /// below are suggestions; the field is free text.
+  final String initialGroup;
+
+  /// City / region, also free text with a gentle default.
+  final String initialCity;
+
+  final void Function(String username, String group, String city) onSubmit;
   final bool busy;
 
   @override
@@ -28,7 +36,10 @@ class ProfileBar extends StatefulWidget {
 class _ProfileBarState extends State<ProfileBar> {
   late final TextEditingController _name =
       TextEditingController(text: widget.initialUsername);
-  late String _campus = widget.initialCampus;
+  late final TextEditingController _group =
+      TextEditingController(text: widget.initialGroup);
+  late final TextEditingController _city =
+      TextEditingController(text: widget.initialCity);
 
   @override
   void didUpdateWidget(covariant ProfileBar oldWidget) {
@@ -36,18 +47,23 @@ class _ProfileBarState extends State<ProfileBar> {
     if (widget.initialUsername != oldWidget.initialUsername) {
       _name.text = widget.initialUsername;
     }
-    if (widget.initialCampus != oldWidget.initialCampus) {
-      _campus = widget.initialCampus;
+    if (widget.initialGroup != oldWidget.initialGroup) {
+      _group.text = widget.initialGroup;
+    }
+    if (widget.initialCity != oldWidget.initialCity) {
+      _city.text = widget.initialCity;
     }
   }
 
   @override
   void dispose() {
     _name.dispose();
+    _group.dispose();
+    _city.dispose();
     super.dispose();
   }
 
-  void _submit() => widget.onSubmit(_name.text, _campus);
+  void _submit() => widget.onSubmit(_name.text, _group.text, _city.text);
 
   @override
   Widget build(BuildContext context) {
@@ -70,31 +86,57 @@ class _ProfileBarState extends State<ProfileBar> {
               onSubmitted: (String _) => _submit(),
             ),
             const SizedBox(height: 10),
-            InputDecorator(
+            TextField(
+              controller: _group,
+              textInputAction: TextInputAction.next,
+              maxLength: 48,
               decoration: const InputDecoration(
-                labelText: 'Campus',
+                labelText: 'Community / group',
+                hintText: 'General Community',
+                helperText: 'Home, street, society or office - pick one or type your own',
+                counterText: '',
                 isDense: true,
-                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               ),
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<String>(
-                  value: campuses.contains(_campus) ? _campus : defaultCampus,
-                  isExpanded: true,
-                  isDense: true,
-                  items: <DropdownMenuItem<String>>[
-                    for (final String campus in campuses)
-                      DropdownMenuItem<String>(
-                        value: campus,
-                        child: Text(campus, overflow: TextOverflow.ellipsis),
-                      ),
-                  ],
-                  onChanged: (String? value) {
-                    if (value != null) {
-                      setState(() => _campus = value);
-                    }
-                  },
-                ),
+              onSubmitted: (String _) => _submit(),
+            ),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: <Widget>[
+                for (final String suggestion in groupSuggestions)
+                  ActionChip(
+                    label: Text(suggestion, style: const TextStyle(fontSize: 11)),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => setState(() => _group.text = suggestion),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _city,
+              textInputAction: TextInputAction.done,
+              maxLength: 48,
+              decoration: const InputDecoration(
+                labelText: 'City / region',
+                hintText: 'Local Area',
+                counterText: '',
+                isDense: true,
               ),
+              onSubmitted: (String _) => _submit(),
+            ),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: <Widget>[
+                for (final String suggestion in citySuggestions)
+                  ActionChip(
+                    label: Text(suggestion, style: const TextStyle(fontSize: 11)),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => setState(() => _city.text = suggestion),
+                  ),
+              ],
             ),
             const SizedBox(height: 10),
             FilledButton.tonalIcon(

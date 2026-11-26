@@ -28,23 +28,48 @@
 
       <section class="profile-bar" aria-label="Your profile">
         <label class="field">
-          <span class="sr-only">Username</span>
+          <span class="field-label">Your name</span>
           <input
             id="username"
             name="username"
             type="text"
-            placeholder="Your name"
+            placeholder="e.g. Priya"
             autocomplete="nickname"
             maxlength="32"
           />
         </label>
         <label class="field">
-          <span class="sr-only">Campus</span>
-          <select id="campus" name="campus">
-            {% for campus in campuses %}
-            <option value="{{ campus }}">{{ campus }}</option>
+          <span class="field-label">Community / group</span>
+          <input
+            id="group-name"
+            name="group_name"
+            type="text"
+            placeholder="General Community"
+            list="group-options"
+            maxlength="48"
+          />
+          <datalist id="group-options">
+            {% for group in group_presets %}
+            <option value="{{ group }}"></option>
             {% endfor %}
-          </select>
+          </datalist>
+          <small class="field-hint">Pick a suggestion or type your own — home, street, society, office.</small>
+        </label>
+        <label class="field">
+          <span class="field-label">City / region</span>
+          <input
+            id="city"
+            name="city"
+            type="text"
+            placeholder="Local Area"
+            list="city-options"
+            maxlength="48"
+          />
+          <datalist id="city-options">
+            {% for city in city_presets %}
+            <option value="{{ city }}"></option>
+            {% endfor %}
+          </datalist>
         </label>
         <button id="set-profile" class="btn btn-primary" type="button">Set Profile</button>
       </section>
@@ -81,7 +106,7 @@
           aria-controls="tab-rank"
           data-tab="rank"
         >
-          Campus Rank
+          Leaderboards
         </button>
       </nav>
 
@@ -154,6 +179,7 @@
             </div>
 
             <p class="result-note" id="result-note" hidden></p>
+            <p class="result-local-note" id="result-local-note" hidden></p>
 
             <button class="btn btn-dispose" id="dispose-btn" type="button">
               Toss into Virtual Bin
@@ -206,15 +232,17 @@
         </section>
 
         <section id="tab-rank" class="panel" role="tabpanel" aria-labelledby="tab-btn-rank" hidden>
-          <h2 class="panel-title">Campus Cleanliness Battle</h2>
-          <ul class="rank-list" id="campus-rank">
-            <li class="rank-empty">Campus standings load once you set a profile.</li>
-          </ul>
-
-          <h2 class="panel-title">Top Eco Warriors</h2>
+          <h2 class="panel-title">Top Eco Contributors</h2>
+          <p class="panel-hint">Everyone, everywhere — ranked by Eco Points.</p>
           <ol class="rank-list" id="user-rank">
-            <li class="rank-empty">Individual rankings arrive with the leaderboard API.</li>
+            <li class="rank-empty">Individual rankings load once someone logs waste.</li>
           </ol>
+
+          <h2 class="panel-title">Community &amp; Group Standings</h2>
+          <p class="panel-hint">Households, streets, societies, offices — any group can compete.</p>
+          <ul class="rank-list" id="group-rank">
+            <li class="rank-empty">Group standings load once a profile is set.</li>
+          </ul>
         </section>
       </main>
 

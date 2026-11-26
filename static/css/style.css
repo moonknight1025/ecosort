@@ -823,3 +823,36 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+/* --- universal community profile -------------------------------------- */
+
+.field-label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.field-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.68rem;
+  color: var(--ink-soft);
+}
+
+.profile-bar {
+  grid-template-columns: 1fr;
+}
+
+.profile-bar .btn {
+  grid-column: 1 / -1;
+}
+
+.result-local-note {
+  margin: 8px 0 0;
+  font-size: 0.72rem;
+  color: var(--ink-soft);
+}

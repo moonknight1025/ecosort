@@ -102,7 +102,12 @@ def main() -> int:
 
     def user_bootstrap() -> str:
         response = client.post(
-            "/api/user", json={"username": "VerifyUser", "campus": "North Campus"}
+            "/api/user",
+            json={
+                "username": "VerifyUser",
+                "group_name": "Home & Family",
+                "city": "Chennai",
+            },
         )
         assert response.status_code == 200, f"status {response.status_code}"
         payload = response.get_json()
@@ -112,11 +117,21 @@ def main() -> int:
         assert all(not row["completed"] for row in payload["challenges"]), "days must start uncompleted"
 
         again = client.post(
-            "/api/user", json={"username": "VerifyUser", "campus": "North Campus"}
+            "/api/user",
+            json={
+                "username": "VerifyUser",
+                "group_name": "Home & Family",
+                "city": "Chennai",
+            },
         ).get_json()
         assert again["user"]["id"] == payload["user"]["id"], "repeat call created a second user"
         assert again["user"]["eco_points"] == payload["user"]["eco_points"], "points changed on reload"
-        return f"id={payload['user']['id']} points=0 challenges=7, repeat call identical"
+        assert again["user"]["group_name"] == "Home & Family", "group was not preserved"
+        assert again["user"]["city"] == "Chennai", "city was not preserved"
+        return (
+            f"id={payload['user']['id']} points=0 challenges=7 "
+            "group='Home & Family' city=Chennai, repeat call identical"
+        )
 
     check("2. user bootstrap is idempotent (PRD 8.4.2)", user_bootstrap)
 
@@ -212,21 +227,26 @@ def main() -> int:
         connection.row_factory = sqlite3.Row
         try:
             rows = connection.execute(
-                "SELECT campus, SUM(eco_points) AS total, COUNT(*) AS members "
-                "FROM users GROUP BY campus"
+                "SELECT group_name, SUM(eco_points) AS total, COUNT(*) AS members "
+                "FROM users GROUP BY group_name"
             ).fetchall()
         finally:
             connection.close()
-        expected = {row["campus"]: (row["total"], row["members"]) for row in rows}
-        for standing in payload["campuses"]:
-            total, members = expected[standing["campus"]]
+        expected = {row["group_name"]: (row["total"], row["members"]) for row in rows}
+        assert "groups" in payload, "leaderboard must expose group standings"
+        for standing in payload["groups"]:
+            total, members = expected[standing["group_name"]]
             assert standing["total_points"] == total, (
-                f"{standing['campus']}: {standing['total_points']} != member sum {total}"
+                f"{standing['group_name']}: {standing['total_points']} != member sum {total}"
             )
             assert standing["members"] == members, (
-                f"{standing['campus']}: {standing['members']} != {members}"
+                f"{standing['group_name']}: {standing['members']} != {members}"
             )
-        return f"{len(users)} users sorted desc, {len(payload['campuses'])} campus totals match member sums"
+        assert all("city" in row for row in users), "user rows must carry a city"
+        return (
+            f"{len(users)} users sorted desc, {len(payload['groups'])} group totals "
+            "match member sums"
+        )
 
     check("6. leaderboard aggregation (PRD 8.4.6)", leaderboard_aggregation)
 
@@ -280,7 +300,20 @@ def main() -> int:
 
     def request_validation() -> str:
         assertions = [
-            (client.post("/api/user", json={"username": "x", "campus": "Atlantis"}).status_code, 400, "unknown campus"),
+            (
+                client.post(
+                    "/api/user", json={"username": "x", "group_name": "g" * 80}
+                ).status_code,
+                400,
+                "group_name too long",
+            ),
+            (
+                client.post(
+                    "/api/user", json={"username": "x", "city": "c" * 80}
+                ).status_code,
+                400,
+                "city too long",
+            ),
             (client.post("/api/user", json={"username": "x" * 200}).status_code, 400, "long username"),
             (client.post("/api/user", json={}).status_code, 400, "missing username"),
             (client.post("/api/user", data="{not json", content_type="application/json").status_code, 400, "malformed JSON"),
@@ -343,11 +376,14 @@ def main() -> int:
             data={"image": (io.BytesIO(b"\xff\xd8jpeg"), "plastic_bottle_01.jpg")},
             content_type="multipart/form-data",
         ).get_json()
-        assert payload["source"] == "rules", f"expected rules, got {payload['source']}"
+        assert payload["source"] == "offline_fallback", (
+            f"expected offline_fallback, got {payload['source']}"
+        )
+        assert "municipal" in (payload.get("local_note") or ""), "local rules note missing"
         assert payload["vision_available"] is False, "vision reported available without a key"
         assert payload["confidence"] is None, "rule answers carry no confidence"
         assert payload["preparation_steps"] == [], "rule answers carry no AI steps"
-        return "source=rules, vision_available=false, no confidence/steps"
+        return "source=offline_fallback, vision_available=false, no confidence/steps, local_note present"
 
     check("9. identify labels rule-based answers (no API key)", rules_provenance)
 
@@ -418,7 +454,7 @@ def main() -> int:
             )
             payload = response.get_json()
             assert response.status_code == 200, f"status {response.status_code}"
-            assert payload["source"] == "rules", "did not fall back to rules"
+            assert payload["source"] == "offline_fallback", "did not fall back to rules"
             assert payload["category"] == "Hazardous Waste", "fallback lost the filename signal"
             assert "401" in (payload["vision_error"] or ""), "vision_error not surfaced"
 
@@ -448,7 +484,7 @@ def main() -> int:
                 data={"image": (io.BytesIO(b"x"), "box.jpg")},
                 content_type="multipart/form-data",
             ).get_json()
-            assert unknown["source"] == "rules", "unknown category was trusted"
+            assert unknown["source"] == "offline_fallback", "unknown category was trusted"
             assert unknown["category"] == "Recyclable Waste", "fallback answer wrong"
             return "401, analyser crash and unknown category all degrade to rules"
         finally:
@@ -506,6 +542,77 @@ def main() -> int:
             rate_limit.reset_rate_limits()
 
     check("12. rate limiting: 429 + Retry-After + reset + kill switch", rate_limiting)
+
+    # ---------------------------------------------------------------- 13
+    def legacy_database_migration() -> str:
+        legacy = Path(tempfile.mkdtemp(prefix="ecosort-legacy-")) / "database.db"
+        connection = sqlite3.connect(legacy)
+        connection.executescript(
+            """
+            CREATE TABLE users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                campus TEXT DEFAULT 'Main Campus',
+                eco_points INTEGER DEFAULT 0,
+                streak_days INTEGER DEFAULT 1
+            );
+            CREATE TABLE waste_catalog (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, keyword TEXT UNIQUE NOT NULL,
+                display_name TEXT NOT NULL, category TEXT NOT NULL,
+                bin_color TEXT NOT NULL, instructions TEXT NOT NULL,
+                points INTEGER DEFAULT 10
+            );
+            CREATE TABLE disposal_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+                item_name TEXT NOT NULL, category TEXT NOT NULL,
+                points_earned INTEGER NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE user_challenges (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+                day_number INTEGER NOT NULL, completed INTEGER DEFAULT 0,
+                UNIQUE (user_id, day_number)
+            );
+            INSERT INTO users (username, campus, eco_points)
+            VALUES ('LegacyUser', 'North Campus', 77);
+            """
+        )
+        connection.commit()
+        connection.close()
+
+        previous_path, previous_uploads, previous_flag = (
+            app_module.DATABASE_PATH,
+            app_module.UPLOAD_DIR,
+            app_module._bootstrapped,
+        )
+        app_module.DATABASE_PATH = str(legacy)
+        app_module.UPLOAD_DIR = str(legacy.parent / "uploads")
+        app_module._bootstrapped = False
+        try:
+            legacy_client = flask_app.test_client()
+            assert legacy_client.get("/").status_code == 200, "legacy database failed to boot"
+            connection = sqlite3.connect(legacy)
+            connection.row_factory = sqlite3.Row
+            try:
+                columns = [row[1] for row in connection.execute("PRAGMA table_info(users)")]
+                row = connection.execute(
+                    "SELECT * FROM users WHERE username = 'LegacyUser'"
+                ).fetchone()
+            finally:
+                connection.close()
+            assert "group_name" in columns and "city" in columns, "columns not added"
+            assert row["group_name"] == "North Campus", (
+                f"campus value lost: {row['group_name']!r}"
+            )
+            assert row["eco_points"] == 77, "points lost during migration"
+            return "campus-era DB booted, campus->group_name, points preserved"
+        finally:
+            app_module.DATABASE_PATH = previous_path
+            app_module.UPLOAD_DIR = previous_uploads
+            app_module._bootstrapped = previous_flag
+            rate_limit.reset_rate_limits()
+
+    check("13. campus-era database upgrades in place", legacy_database_migration)
 
     # ---------------------------------------------------------------- summary
     print(f"\n{len(PASSED)} passed, {len(FAILED)} failed")

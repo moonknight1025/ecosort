@@ -8,7 +8,8 @@ abstract class EcoSortRepository {
   /// Create or rehydrate a profile and return its full state.
   Future<AppSnapshot> loadProfile({
     required String username,
-    required String campus,
+    required String groupName,
+    required String city,
   });
 
   /// Classify a preset keyword and/or an uploaded file name.
@@ -30,7 +31,7 @@ abstract class EcoSortRepository {
     required int day,
   });
 
-  Future<List<CampusStanding>> campusStandings();
+  Future<List<GroupStanding>> groupStandings();
 
   Future<List<LeaderboardEntry>> topUsers();
 }

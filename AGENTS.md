@@ -66,7 +66,20 @@ Categories and bins — exact literals:
 | `E-Waste` | Purple | 20–25 |
 | `Hazardous Waste` | Red | 25 |
 
-Campuses: `North Campus`, `South Hostel`, `Science Block`, `Main Campus`.
+Profile fields are universal, with **no campus assumption**:
+
+- `group_name` — community / group, free text, default `General Community`.
+  Presets are *suggestions* (`GROUP_PRESETS`): General Community, Home & Family,
+  Neighborhood / Ward, Apartment Society, Workplace / Office.
+- `city` — city / region, free text, default `Local Area`.
+- Both are length-capped (`MAX_GROUP_LENGTH` / `MAX_CITY_LENGTH`, 48) and never
+  validated against a whitelist: a household, street, society, office or region
+  must all be able to join. A typo therefore creates a new group, which is the
+  accepted trade-off.
+
+Leaderboards: Top Eco Contributors (`eco_points DESC, id ASC`) and Community &
+Group Standings (`GROUP BY group_name`, `SUM(eco_points)`, member count,
+`total_points DESC, group_name ASC`).
 
 Scoring: each disposal adds the catalog item's points; each first-time claim of
 a challenge day adds `+15`. Badges are computed from `disposal_logs` and
@@ -89,7 +102,11 @@ the PR #6 review comment.
 - `user_challenges(id, user_id, day_number, completed, UNIQUE(user_id, day_number))`
 
 Bootstrap is idempotent by construction: `CREATE TABLE IF NOT EXISTS` plus
-`INSERT OR IGNORE` against those UNIQUE constraints. `init_db()` runs on import,
+`INSERT OR IGNORE` against those UNIQUE constraints. **Migrations are additive
+and must run before any index is created** (`SCHEMA_SQL` tables →
+`_migrate_campus_to_group()` → `_migrate_disposal_tokens()` → `INDEX_SQL`).
+Creating `idx_disposal_token` inside the table script made every pre-M3 database
+fail to boot with "no such column: client_token"; do not merge them back. `init_db()` runs on import,
 so both `python app.py` and `flask --app app run` seed identically. Never add a
 seed that needs a manual `DELETE` before it can run twice.
 

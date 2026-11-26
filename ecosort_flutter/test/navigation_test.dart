@@ -9,7 +9,9 @@ import 'package:flutter_test/flutter_test.dart';
 /// finders would fail for reasons that have nothing to do with the behaviour
 /// under test.
 void usePhoneViewport(WidgetTester tester) {
-  tester.view.physicalSize = const Size(390, 1800);
+  // Tall enough that the scan CTA and preset chips are laid out by the
+  // ListView instead of being skipped as off-screen children.
+  tester.view.physicalSize = const Size(390, 2600);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
 }
@@ -44,14 +46,15 @@ void main() {
 
     await tester.tap(find.text('Rank'));
     await tester.pumpAndSettle();
-    expect(find.text('Campus Cleanliness Battle'), findsOneWidget);
-    expect(find.text('Top Eco Warriors'), findsOneWidget);
+    expect(find.text('Top Eco Contributors'), findsOneWidget);
+    expect(find.text('Community & Group Standings'), findsOneWidget);
+    expect(find.text('Community & Group Standings'), findsOneWidget);
     expect(find.text('Achievement Badges'), findsNothing);
 
     await tester.tap(find.text('Scan'));
     await tester.pumpAndSettle();
     expect(find.text('Scan & Bin'), findsOneWidget);
-    expect(find.text('Campus Cleanliness Battle'), findsNothing);
+    expect(find.text('Top Eco Contributors'), findsNothing);
   });
 
   testWidgets('the Eco Points pill renders the current score',
@@ -76,6 +79,7 @@ void main() {
     await tester.pumpWidget(EcoSortApp(controller: buildController()));
     await tester.pumpAndSettle();
 
+    await tester.ensureVisible(find.text('Used Battery'));
     await tester.tap(find.text('Used Battery'));
     await tester.pumpAndSettle();
 
@@ -90,8 +94,10 @@ void main() {
     await tester.pumpWidget(EcoSortApp(controller: buildController()));
     await tester.pumpAndSettle();
 
+    await tester.ensureVisible(find.text('Plastic Bottle'));
     await tester.tap(find.text('Plastic Bottle'));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Toss into Virtual Bin'));
     await tester.tap(find.text('Toss into Virtual Bin'));
     await tester.pumpAndSettle();
 
@@ -118,6 +124,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final Finder firstClaim = find.text('Claim +15').first;
+    await tester.ensureVisible(firstClaim);
     await tester.tap(firstClaim);
     await tester.pumpAndSettle();
 

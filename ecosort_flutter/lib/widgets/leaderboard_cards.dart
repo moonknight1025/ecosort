@@ -2,11 +2,11 @@ import 'package:material_ui/material_ui.dart';
 
 import '../models/leaderboard.dart';
 
-/// Campus Cleanliness Battle: aggregated points and member counts per campus.
-class CampusStandingsCard extends StatelessWidget {
-  const CampusStandingsCard({super.key, required this.standings});
+/// Community & Group Standings: points and member counts per group.
+class GroupStandingsCard extends StatelessWidget {
+  const GroupStandingsCard({super.key, required this.standings});
 
-  final List<CampusStanding> standings;
+  final List<GroupStanding> standings;
 
   @override
   Widget build(BuildContext context) {
@@ -14,7 +14,7 @@ class CampusStandingsCard extends StatelessWidget {
       return const Card(
         child: Padding(
           padding: EdgeInsets.all(16),
-          child: Text('Campus standings load once a profile is set.'),
+          child: Text('Group standings load once a profile is set.'),
         ),
       );
     }
@@ -36,7 +36,7 @@ class CampusStandingsCard extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: <Widget>[
                           Text(
-                            standings[i].campus,
+                            standings[i].groupName,
                             style: const TextStyle(fontWeight: FontWeight.w600),
                           ),
                           Text(
@@ -61,7 +61,7 @@ class CampusStandingsCard extends StatelessWidget {
   }
 }
 
-/// Top Eco Warriors: individual rankings, already sorted by the repository.
+/// Top Eco Contributors: individual rankings, already sorted by the repository.
 class TopUsersCard extends StatelessWidget {
   const TopUsersCard({super.key, required this.entries});
 
@@ -99,7 +99,7 @@ class TopUsersCard extends StatelessWidget {
                             style: const TextStyle(fontWeight: FontWeight.w600),
                           ),
                           Text(
-                            entries[i].campus,
+                            entries[i].subtitle,
                             style: Theme.of(context).textTheme.labelSmall,
                           ),
                         ],

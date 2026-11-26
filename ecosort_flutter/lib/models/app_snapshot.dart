@@ -34,9 +34,14 @@ class AppSnapshot {
 
   int get claimedDays => challenges.where((day) => day.completed).length;
 
-  factory AppSnapshot.empty(String username, String campus) {
+  factory AppSnapshot.empty(String username, String groupName, String city) {
     return AppSnapshot(
-      user: UserProfile(username: username, campus: campus, ecoPoints: 0),
+      user: UserProfile(
+        username: username,
+        groupName: groupName,
+        city: city,
+        ecoPoints: 0,
+      ),
       badges: const <BadgeState>[],
       challenges: const <ChallengeDay>[],
       binCounts: <WasteCategory, int>{

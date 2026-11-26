@@ -29,7 +29,8 @@ class ApiRepository implements EcoSortRepository {
 
   /// Flask user ids, keyed by username, learned from `/api/user`.
   final Map<String, int> _userIds = <String, int>{};
-  final Map<String, String> _campuses = <String, String>{};
+  final Map<String, String> _groups = <String, String>{};
+  final Map<String, String> _cities = <String, String>{};
 
   static const Map<String, String> _headers = <String, String>{
     'Content-Type': 'application/json',
@@ -122,7 +123,8 @@ class ApiRepository implements EcoSortRepository {
   @override
   Future<AppSnapshot> loadProfile({
     required String username,
-    required String campus,
+    required String groupName,
+    required String city,
   }) async {
     final http.Response response;
     try {
@@ -132,7 +134,8 @@ class ApiRepository implements EcoSortRepository {
             headers: _headers,
             body: jsonEncode(<String, String>{
               'username': username,
-              'campus': campus,
+              'group_name': groupName,
+              'city': city,
             }),
           )
           .timeout(timeout);
@@ -142,7 +145,8 @@ class ApiRepository implements EcoSortRepository {
     final Map<String, dynamic> json = await _decode(response, '/api/user');
     final AppSnapshot snapshot = _snapshotFrom(json);
     _userIds[snapshot.user.username] = snapshot.user.id ?? -1;
-    _campuses[snapshot.user.username] = snapshot.user.campus;
+    _groups[snapshot.user.username] = snapshot.user.groupName;
+    _cities[snapshot.user.username] = snapshot.user.city;
     return snapshot;
   }
 
@@ -202,7 +206,8 @@ class ApiRepository implements EcoSortRepository {
     // always renders one authoritative state.
     return loadProfile(
       username: username,
-      campus: _campuses[username] ?? defaultCampus,
+      groupName: _groups[username] ?? defaultGroup,
+      city: _cities[username] ?? defaultCity,
     );
   }
 
@@ -244,12 +249,15 @@ class ApiRepository implements EcoSortRepository {
   }
 
   @override
-  Future<List<CampusStanding>> campusStandings() async {
+  Future<List<GroupStanding>> groupStandings() async {
     final Map<String, dynamic> json = await _leaderboardJson();
-    final List<dynamic> raw = (json['campuses'] as List<dynamic>?) ?? const <dynamic>[];
-    return <CampusStanding>[
+    // `groups` is current; `campuses` is accepted from an older server.
+    final List<dynamic> raw = (json['groups'] as List<dynamic>?) ??
+        (json['campuses'] as List<dynamic>?) ??
+        const <dynamic>[];
+    return <GroupStanding>[
       for (final dynamic row in raw)
-        CampusStanding.fromJson(row as Map<String, dynamic>),
+        GroupStanding.fromJson(row as Map<String, dynamic>),
     ];
   }
 

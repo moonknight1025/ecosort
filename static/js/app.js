@@ -22,7 +22,8 @@ const el = {
   tabs: Array.from(document.querySelectorAll('.tab')),
   panels: Array.from(document.querySelectorAll('.panel')),
   username: document.getElementById('username'),
-  campus: document.getElementById('campus'),
+  groupName: document.getElementById('group-name'),
+  city: document.getElementById('city'),
   setProfile: document.getElementById('set-profile'),
   ecoScore: document.getElementById('eco-score'),
   toast: document.getElementById('toast'),
@@ -51,9 +52,10 @@ const el = {
   resultSteps: document.getElementById('result-steps'),
   resultWhy: document.getElementById('result-why'),
   resultNote: document.getElementById('result-note'),
+  resultLocalNote: document.getElementById('result-local-note'),
   disposeBtn: document.getElementById('dispose-btn'),
   claims: Array.from(document.querySelectorAll('[data-claim-day]')),
-  campusRank: document.getElementById('campus-rank'),
+  groupRank: document.getElementById('group-rank'),
   userRank: document.getElementById('user-rank'),
 };
 
@@ -231,10 +233,10 @@ function renderResult(result) {
 
   const fromAi = result.source === 'ai_vision';
   el.resultSource.hidden = false;
-  el.resultSource.dataset.source = fromAi ? 'ai_vision' : 'rules';
+  el.resultSource.dataset.source = fromAi ? 'ai_vision' : 'offline_fallback';
   el.resultSource.textContent = fromAi
     ? `AI Vision${result.ai_model ? ` · ${result.ai_model}` : ''}`
-    : 'Offline rules';
+    : 'Offline fallback';
 
   const steps = Array.isArray(result.preparation_steps) ? result.preparation_steps : [];
   if (steps.length > 0) {
@@ -261,6 +263,13 @@ function renderResult(result) {
     el.resultNote.hidden = true;
   }
 
+  if (result.local_note) {
+    el.resultLocalNote.hidden = false;
+    el.resultLocalNote.textContent = result.local_note;
+  } else {
+    el.resultLocalNote.hidden = true;
+  }
+
   el.disposeBtn.disabled = false;
   el.disposeBtn.textContent = 'Toss into Virtual Bin';
 }
@@ -282,22 +291,35 @@ function rankRow(position, title, subtitle, score) {
 }
 
 function renderLeaderboards(payload) {
-  const campuses = (payload && payload.campuses) || [];
+  // `groups` is the current shape; `campuses` is accepted from older servers.
+  const groups = (payload && (payload.groups || payload.campuses)) || [];
   const users = (payload && payload.users) || [];
-
-  el.campusRank.innerHTML = campuses.length
-    ? campuses
-        .map((row, index) =>
-          rankRow(index + 1, row.campus, `${row.members} member${row.members === 1 ? '' : 's'}`, row.total_points),
-        )
-        .join('')
-    : '<li class="rank-empty">No campus data yet.</li>';
 
   el.userRank.innerHTML = users.length
     ? users
-        .map((row, index) => rankRow(index + 1, row.username, row.campus, row.eco_points))
+        .map((row, index) =>
+          rankRow(
+            index + 1,
+            row.username,
+            [row.group_name || row.campus, row.city].filter(Boolean).join(' · '),
+            row.eco_points,
+          ),
+        )
         .join('')
     : '<li class="rank-empty">No disposals logged yet.</li>';
+
+  el.groupRank.innerHTML = groups.length
+    ? groups
+        .map((row, index) =>
+          rankRow(
+            index + 1,
+            row.group_name || row.campus,
+            `${row.members} member${row.members === 1 ? '' : 's'}`,
+            row.total_points,
+          ),
+        )
+        .join('')
+    : '<li class="rank-empty">No group data yet.</li>';
 }
 
 function renderCapabilities(payload) {
@@ -318,8 +340,11 @@ function saveProfile(user) {
   state.profile = user;
   localStorage.setItem(PROFILE_KEY, JSON.stringify(user));
   el.username.value = user.username;
-  if (user.campus) {
-    el.campus.value = user.campus;
+  if (user.group_name) {
+    el.groupName.value = user.group_name;
+  }
+  if (user.city) {
+    el.city.value = user.city;
   }
 }
 
@@ -335,8 +360,11 @@ function restoreProfile() {
     }
     state.profile = user;
     el.username.value = user.username;
-    if (user.campus) {
-      el.campus.value = user.campus;
+    if (user.group_name || user.campus) {
+      el.groupName.value = user.group_name || user.campus;
+    }
+    if (user.city) {
+      el.city.value = user.city;
     }
     if (typeof user.eco_points === 'number') {
       setEcoScore(user.eco_points);
@@ -358,7 +386,8 @@ function applyUserPayload(payload) {
 
 async function syncProfile({ announce } = { announce: true }) {
   const username = el.username.value.trim();
-  const campus = el.campus.value;
+  const groupName = el.groupName.value.trim();
+  const city = el.city.value.trim();
   if (!username) {
     toast('Enter a name first.');
     el.username.focus();
@@ -367,10 +396,15 @@ async function syncProfile({ announce } = { announce: true }) {
 
   el.setProfile.disabled = true;
   try {
-    const payload = await postJson('/api/user', { username, campus });
+    const payload = await postJson('/api/user', {
+      username,
+      group_name: groupName,
+      city,
+    });
     applyUserPayload(payload);
     if (announce) {
-      toast(`Welcome ${payload.user.username} · ${payload.user.campus}`);
+      const where = [payload.user.group_name, payload.user.city].filter(Boolean).join(' · ');
+      toast(`Welcome ${payload.user.username}${where ? ` · ${where}` : ''}`);
     }
     return true;
   } catch (error) {
@@ -707,7 +741,7 @@ async function refreshLeaderboards() {
   try {
     renderLeaderboards(await callApi('/api/leaderboard'));
   } catch (error) {
-    el.campusRank.innerHTML = `<li class="rank-empty">${escapeHtml(error.message)}</li>`;
+    el.groupRank.innerHTML = `<li class="rank-empty">${escapeHtml(error.message)}</li>`;
     el.userRank.innerHTML = '';
   }
 }

@@ -21,6 +21,26 @@ const CHROME = process.env.CHROME_PATH ||
   'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const BASE = process.env.ECOSORT_URL || 'http://127.0.0.1:5000/';
 
+/**
+ * Wait until the identify rate-limit window has room again. Re-running this
+ * script inside the same 60 s window would otherwise inherit the previous run's
+ * exhausted budget (the throttle check deliberately drains it).
+ */
+async function waitForIdentifyBudget(page) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const retryAfter = await page.evaluate(async () => {
+      const form = new FormData();
+      form.append('preset_keyword', 'bottle');
+      const response = await fetch('/api/identify', { method: 'POST', body: form });
+      if (response.status !== 429) return 0;
+      return Number(response.headers.get('Retry-After') || 60);
+    });
+    if (retryAfter === 0) return;
+    console.log(`  (waiting ${retryAfter}s for the identify rate-limit window)`);
+    await page.waitForTimeout((retryAfter + 1) * 1000);
+  }
+}
+
 const results = [];
 const consoleErrors = [];
 
@@ -53,13 +73,16 @@ await page.goto(BASE, { waitUntil: 'networkidle' });
 
 // A profile is required before a disposal can be logged.
 await page.fill('#username', 'CameraTester');
-await page.selectOption('#campus', 'Science Block');
+await page.fill('#group-name', 'Apartment Society');
+await page.fill('#city', 'Coimbatore');
 await page.click('#set-profile');
 await page.waitForFunction(
   () => document.getElementById('eco-score')?.textContent === '0',
   null,
   { timeout: 5000 },
 ).catch(() => {});
+
+await waitForIdentifyBudget(page);
 
 // --- 1. live camera starts ----------------------------------------------
 await page.click('#start-camera');
@@ -105,8 +128,8 @@ const provenance = await page.evaluate(() => {
     note: note.hidden ? '' : note.textContent.trim(),
   };
 });
-check('result states whether AI vision or offline rules answered',
-  provenance.visible && ['ai_vision', 'rules'].includes(provenance.source),
+check('result states whether AI vision or the offline fallback answered',
+  provenance.visible && ['ai_vision', 'offline_fallback'].includes(provenance.source),
   `${provenance.label} (${provenance.source})`);
 check('unconfigured AI explains itself instead of pretending',
   provenance.source === 'ai_vision' || provenance.note.length > 0,
