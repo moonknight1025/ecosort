@@ -165,7 +165,35 @@ into a route.
 - `database.db` and `static/uploads/*` are gitignored generated state, not
   source.
 
-## 10. Style
+## 10. The Flutter client (`ecosort_flutter/`)
+
+A second application lives in this repository: a Flutter Web client that
+implements the same product against the same domain rules.
+
+```bash
+cd ecosort_flutter
+flutter pub get
+flutter analyze        # must stay at "No issues found"
+flutter test           # 26 tests, must stay green
+flutter run -d chrome
+flutter build web --release
+```
+
+Rules for this tree:
+
+- `package:material_ui/material_ui.dart`, **not** `package:flutter/material.dart`
+  (deprecated after Flutter 3.47; using the old import fails `flutter analyze`).
+- Domain literals are duplicated from `app.py` by necessity. `README.md` has the
+  file-to-file map; change both sides in the same commit and re-run both suites.
+- The classifier in `lib/data/classifier.dart` must keep the same token-first
+  rule as `classify_waste()`, including `CATALOG_ALIASES`.
+- Never `Size.fromHeight(...)` in a shared button style: it is an infinite
+  minimum width and throws inside a `Row`.
+- Widget tests set a phone viewport (`usePhoneViewport`) because a `ListView`
+  inside the default 800x600 test surface never builds its off-screen children.
+- Uploads are classified from the file name; no pixel analysis, no vision API.
+
+## 11. Style
 
 - Python: 4-space indent, typed public helpers, docstrings that state why.
 - Every mutation route validates input and returns JSON errors, never HTML.
