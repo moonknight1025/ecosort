@@ -4,7 +4,7 @@ Instructions for any coding agent working in this repository. Read this file
 before your first edit; it narrows what the PRD allows and records what is
 already built.
 
-Status: current · Owner: Pi Agent · Milestone: M1-M5 complete (V1 shipped).
+Status: current · Owner: Pi Agent · Milestone: M1-M5 complete; camera + AI vision + rate limiting shipped.
 
 ## 1. What this project is
 
@@ -196,7 +196,62 @@ Rules for this tree:
   inside the default 800x600 test surface never builds its off-screen children.
 - Uploads are classified from the file name; no pixel analysis, no vision API.
 
-## 11. Style
+## 11. Camera, AI vision and rate limiting
+
+Three subsystems that all follow one rule: **the feature degrades, the app does
+not**.
+
+### Camera (`static/js/app.js`, `ecosort_flutter/lib/screens/scan_tab.dart`)
+
+- Live preview is `getUserMedia({ facingMode: { ideal: 'environment' } })` in the
+  browser and the `camera` plugin in Flutter. Both expose Capture / Switch /
+  Stop (Flutter also has Retake via the preview).
+- Every failure path must stay usable: permission denied, no device, device busy,
+  insecure origin (anything but `localhost`/`127.0.0.1` over http), and the
+  `capture="environment"` file input all fall back to upload + the six presets.
+  Never let a camera error remove the upload path.
+- A capture is one JPEG frame, sent as multipart `image`. Nothing is recorded,
+  stored or streamed anywhere else.
+
+### AI vision (`vision.py`, `analyze_waste()` in `app.py`)
+
+- No key means no network call and no import-time work. `vision.enabled()` is
+  evaluated per request, so `RATE_LIMIT_*`/`ECOSORT_AI_*` changes apply live.
+- The model answer is **untrusted input**: `vision._validate()` checks it, and
+  `analyze_waste()` re-checks category + steps at the boundary. An unknown
+  category is a rejected answer, not a new stream.
+- Points from the model are clamped to the catalog range for that stream
+  (`category_point_bounds()`), so the model can never mint points.
+- Failures (timeout, HTTP error, bad JSON, unknown category, analyser crash) fall
+  back to `classify_waste()` and surface `vision_error`. A scan must answer 200
+  with rules rather than 500.
+- Every identify response carries `source` (`ai_vision` | `rules`),
+  `confidence`, `preparation_steps`, `why`, `ai_model`, `vision_error`,
+  `vision_available`. The UI must render the provenance, not hide it.
+
+### Rate limiting (`rate_limit.py`)
+
+- In-process sliding windows, no dependency. Buckets: `identify`, `ai_vision`,
+  `general`; configured by `RATE_LIMIT_*_PER_MIN`; `RATE_LIMIT_ENABLED=0` kills
+  enforcement.
+- Over the limit returns `429` + JSON (`error`, `bucket`, `limit`,
+  `retry_after`) + a `Retry-After` header. The UI shows it as a toast, never an
+  exception.
+- Exhausting the **AI** bucket is not a 429 for the scan: it degrades that one
+  request to rules so the user still gets guidance. Never let a paid-call guard
+  break the free path.
+- Counters are per process; multiple workers multiply the limit. Documented, not
+  hidden.
+- `rate_limit.reset_rate_limits()` exists so `tests/verify_api.py` can prove both
+  the 200 and the 429 path in one run. Any test that touches identify must pin
+  `RATE_LIMIT_IDENTIFY_PER_MIN` first.
+
+### Configuration
+
+`.env` is parsed by `_load_dotenv()` in `app.py` (stdlib, no python-dotenv);
+real environment variables win. Never commit `.env`; keep `.env.example` current.
+
+## 12. Style
 
 - Python: 4-space indent, typed public helpers, docstrings that state why.
 - Every mutation route validates input and returns JSON errors, never HTML.

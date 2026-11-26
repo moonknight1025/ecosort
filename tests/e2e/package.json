@@ -1,0 +1,13 @@
+{
+  "name": "ecosort-e2e",
+  "private": true,
+  "type": "module",
+  "description": "Optional browser checks: drives the installed Chrome via playwright-core. Not a product dependency.",
+  "scripts": {
+    "flow": "node flow.mjs",
+    "camera": "node camera.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.49.0"
+  }
+}
