@@ -4,7 +4,7 @@ Instructions for any coding agent working in this repository. Read this file
 before your first edit; it narrows what the PRD allows and records what is
 already built.
 
-Status: current · Owner: Pi Agent · Milestone: M2 complete, M3 next.
+Status: current · Owner: Pi Agent · Milestone: M1-M5 complete (V1 shipped).
 
 ## 1. What this project is
 
@@ -102,7 +102,7 @@ python -m pip install -r requirements.txt
 # run the app (bootstraps database.db and static/uploads/)
 python app.py                       # http://127.0.0.1:5000
 
-# automated verification (arrives in M5)
+# automated API verification (11 checks, isolated temp database)
 python tests/verify_api.py
 ```
 
@@ -112,9 +112,9 @@ python tests/verify_api.py
 | --- | --- | --- |
 | **M1 — done** | scaffold, SQLite bootstrap, seed data, 3-tab shell | `GET /` = 200; 13 catalog rows + 4 users after two boots |
 | **M2 — done** | `/api/user`, `/api/identify`, `classify_waste()`, scan UI | preset/upload/fallback classification < 300 ms |
-| M3 — next | `/api/dispose`, result card wiring, virtual bins, toasts | log row + score + bin count persist across reload |
-| M4 | badges, `/api/challenge/complete`, `/api/leaderboard` | badge unlock, +15 once, campus totals |
-| M5 | `tests/verify_api.py`, 375 px audit, demo script | 100 % pass, no horizontal overflow |
+| **M3 — done** | `/api/dispose` (server-derived points, `client_token`), bins + toasts | log row + score + bin count persist across reload |
+| **M4 — done** | badges, `/api/challenge/complete`, `/api/leaderboard` | badge unlock, +15 once, campus totals |
+| **M5 — done** | `tests/verify_api.py` (11 checks), browser E2E at 375 px, CI | all checks pass, no horizontal overflow |
 
 Milestone drafts ready to become GitHub issues live in
 `docs/planning/milestones.md`. **Do not** open issues, push branches or open
@@ -129,8 +129,20 @@ PRs without human approval — the remote is `moonknight1025/ecosort` and the
 | `POST /api/user` | `{username, campus}` | `{user, badges, challenges, bin_counts}` |
 | `POST /api/identify` | multipart `image` and/or `preset_keyword` | `{display_name, category, bin_color, instructions, points, matched_keyword, fallback, image_url}` |
 
-Still missing: `POST /api/dispose` (M3), `POST /api/challenge/complete` and
-`GET /api/leaderboard` (M4).
+| `POST /api/dispose` | `{user_id, item_name, client_token?}` | `{new_points, badges, bin_counts, logged, duplicate}` |
+| `POST /api/challenge/complete` | `{user_id, day_number}` | `{new_points, challenges, awarded, awarded_points}` |
+| `GET /api/leaderboard` | — | `{users[up to 10], campuses[]}` |
+
+All six PRD routes exist. `POST /api/dispose` deliberately **ignores** the
+contract's `category`/`points` fields and re-derives both through
+`classify_waste()`; `client_token` (generated when absent) plus the partial
+unique index `idx_disposal_token` makes a retry a no-op instead of a double
+credit. The challenge claim is one conditional `UPDATE ... AND completed = 0`
+with a `rowcount` check, so a double click returns +0 rather than a 500.
+
+There is no auth, so any client can act as any user — accepted V1 risk.
+CORS is wide open (`Access-Control-Allow-Origin: *`) so the Flutter Web client
+can call the API from a different dev origin. Tighten both before real use.
 
 `classify_waste(keyword_text, image_path=None)` is the only place waste is
 classified. Replace its body with a vision call later; do not move matching
@@ -138,30 +150,21 @@ into a route.
 
 ## 9. Known gaps at M2 (honest status)
 
-- `POST /api/dispose`, `POST /api/challenge/complete` and
-  `GET /api/leaderboard` **do not exist yet**. The "Toss into Virtual Bin" CTA
-  and the challenge buttons explain that instead of faking success.
-- `POST /api/dispose` must **not** trust the client's `points`/`category` from
-  the PRD contract; M3 re-derives both from `waste_catalog`. It also needs a
-  `client_token` with `UNIQUE(user_id, client_token)` — a disabled button is not
-  an idempotency guard.
-- The challenge claim must be one conditional
-  `UPDATE ... WHERE completed = 0` plus a `rowcount` check, or two concurrent
-  claims raise `IntegrityError` and return 500 instead of +0.
-- `streak_days` still exists in the `users` table but is **no longer returned**
-  by `/api/user` until M4 actually writes it. Implement it there or drop the
-  column.
-- The badge evaluator already ships (two M2 responses are contractually
-  required to return `badges`, so it could not be deferred), but nothing can
-  unlock a badge until M3 writes to `disposal_logs`.
-- `tests/verify_api.py` is still an M5 deliverable. M1/M2 gates were verified
-  with the Flask test client run ad hoc — see the commit messages for output.
-  For isolation, point `app.DATABASE_PATH` at a temp file and set
-  `app._bootstrapped = False` before the first request.
-- Uploaded files keep their sanitized original name, so re-uploading the same
-  file overwrites it; non-ASCII names fall back to `upload_<hex8><ext>`.
-- Browser console cleanliness and the 375 px layout remain **unverified** — no
-  headless browser is installed here.
+- No authentication (out of scope in the PRD). Any client can act as any user,
+  and `/api/user` lets a caller move an existing username to another campus.
+  Do not treat the leaderboard as evidence of real behaviour.
+- `streak_days` exists in the `users` table but is never written and is no
+  longer returned by `/api/user`. Implement it or drop the column.
+- Uploads are extension-checked, not content-checked, and re-uploading the
+  same sanitized name overwrites the previous file. Non-ASCII names fall back
+  to `upload_<hex8><ext>`.
+- `tests/verify_api.py` covers the API only. The browser flow was verified with
+  a Playwright script against installed Chrome (13 checks at 375x812, zero
+  console errors); that script is **not** in the repo and is not run by CI.
+- The Flutter client's backend mode now has all five routes to call, but its
+  end-to-end path is exercised by `flutter test` in local mode only — a
+  Flutter web canvas app cannot be asserted through the DOM.
+- No `LICENSE` file yet. Choosing one is the Product Owner's call.
 - `database.db` and `static/uploads/*` are gitignored generated state, not
   source.
 

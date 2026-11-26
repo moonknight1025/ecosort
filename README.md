@@ -23,9 +23,18 @@ The database bootstraps itself on first request: `database.db` with four tables,
 13 catalog items across five streams, 4 seeded campus users and 7 challenge days,
 all via `INSERT OR IGNORE`, so restarting never duplicates a row.
 
-Implemented routes: `GET /`, `POST /api/user`, `POST /api/identify`.
-`POST /api/dispose`, `POST /api/challenge/complete` and `GET /api/leaderboard`
-are milestones M3/M4 — see `docs/planning/milestones.md` and issues #1–#4.
+All six PRD routes are implemented:
+
+| Route | Purpose |
+| --- | --- |
+| `GET /` | the server-rendered app |
+| `POST /api/user` | create/rehydrate a profile |
+| `POST /api/identify` | classify a preset keyword or uploaded file name |
+| `POST /api/dispose` | log a disposal; points re-derived server-side, `client_token` idempotency |
+| `POST /api/challenge/complete` | claim one challenge day, +15 exactly once |
+| `GET /api/leaderboard` | top 10 users + campus totals |
+
+CORS is open so the Flutter Web client can call the API from another dev origin.
 
 ## 2. Flutter Web client
 
@@ -70,9 +79,11 @@ the other, and re-run both test suites.
 | M1 scaffold + SQLite bootstrap + shell | done (PR #5) |
 | M2 profiles + deterministic classifier | done (PR #6), review findings fixed |
 | Flutter Web client | done (this branch) |
-| M3 disposal + virtual bins | not started (#2) |
-| M4 badges, challenge, leaderboards | not started (#3) |
-| M5 automated API suite + polish | not started (#4) |
+| M3 disposal + virtual bins | done |
+| M4 badges, challenge, leaderboards | done |
+| M5 automated API suite + browser E2E | done |
 
-No `LICENSE` file yet, and no CI workflow — both were raised in review and are
-still open.
+`python tests/verify_api.py` → 11 checks pass. `.github/workflows/ci.yml` runs
+that suite plus `flutter analyze` and `flutter test` on every PR.
+
+Still open: no `LICENSE` file (a Product Owner decision).
