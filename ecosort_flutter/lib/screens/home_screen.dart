@@ -107,10 +107,15 @@ class _HomeScreenState extends State<HomeScreen> {
               if (controller.busy) const LinearProgressIndicator(minHeight: 2),
               ProfileBar(
                 initialUsername: controller.username,
-                initialCampus: controller.campus,
+                initialGroup: controller.groupName,
+                initialCity: controller.city,
                 busy: controller.busy,
-                onSubmit: (String username, String campus) async {
-                  await controller.setProfile(username: username, campus: campus);
+                onSubmit: (String username, String group, String city) async {
+                  await controller.setProfile(
+                    username: username,
+                    groupName: group,
+                    city: city,
+                  );
                   if (!mounted) {
                     return;
                   }

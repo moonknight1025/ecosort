@@ -58,7 +58,8 @@ check('one tab panel visible at a time', visiblePanels === 1, `${visiblePanels} 
 
 // 5. set a profile
 await page.fill('#username', 'E2EUser');
-await page.selectOption('#campus', 'North Campus');
+await page.fill('#group-name', 'Home & Family');
+await page.fill('#city', 'Chennai');
 await page.click('#set-profile');
 await page.waitForFunction(() => document.getElementById('eco-score').textContent !== '0' || document.getElementById('toast')?.textContent.includes('Welcome'), null, { timeout: 5000 }).catch(() => {});
 const startScore = await page.textContent('#eco-score');
@@ -101,16 +102,19 @@ check('claiming day 1 adds +15 and disables the button', claimed === 'Claimed', 
 const disabled = await page.isDisabled('.challenge[data-day="1"] .btn-claim');
 check('claimed day cannot be re-claimed from the UI', disabled, `disabled=${disabled}`);
 
-// 11. campus rank tab
+// 11. leaderboards: everyone + community groups
 await page.click('.tab[data-tab="rank"]');
-await page.waitForSelector('#campus-rank .rank-item', { timeout: 5000 });
+await page.waitForSelector('#group-rank .rank-item', { timeout: 5000 });
 const rank = await page.evaluate(() => ({
-  campuses: document.querySelectorAll('#campus-rank .rank-item').length,
+  groups: document.querySelectorAll('#group-rank .rank-item').length,
   users: document.querySelectorAll('#user-rank .rank-item').length,
-  firstCampus: document.querySelector('#campus-rank .rank-name')?.textContent.trim().split('\n')[0],
+  firstGroup: document.querySelector('#group-rank .rank-name')?.textContent.trim().split('\n')[0],
+  subtitle: document.querySelector('#user-rank .rank-sub')?.textContent.trim() ?? '',
 }));
-check('campus battle and top warriors render', rank.campuses === 4 && rank.users >= 5,
-  `${rank.campuses} campuses, ${rank.users} users, top=${rank.firstCampus}`);
+check('top contributors and group standings render', rank.groups >= 3 && rank.users >= 5,
+  `${rank.groups} groups, ${rank.users} users, top group=${rank.firstGroup}`);
+check('contributor rows show group and city',
+  rank.subtitle.includes('\u00b7'), `subtitle "${rank.subtitle}"`);
 
 // 12. console must be clean
 check('no console or page errors', errors.length === 0, errors.slice(0, 3).join(' | ') || 'clean');

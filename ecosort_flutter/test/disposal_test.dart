@@ -17,7 +17,7 @@ void main() {
   test('a disposal awards the catalog points and increments the right bin',
       () async {
     final before =
-        await repository.loadProfile(username: 'You', campus: 'Main Campus');
+        await repository.loadProfile(username: 'You', groupName: 'General Community', city: 'Local Area');
     expect(before.user.ecoPoints, 0);
     expect(before.binCount(WasteCategory.hazardous), 0);
 
@@ -60,7 +60,7 @@ void main() {
 
     final LocalRepository reloaded = LocalRepository(store: store);
     final snapshot =
-        await reloaded.loadProfile(username: 'You', campus: 'Main Campus');
+        await reloaded.loadProfile(username: 'You', groupName: 'General Community', city: 'Local Area');
 
     expect(snapshot.user.ecoPoints, 15);
     expect(snapshot.binCount(WasteCategory.recyclable), 1);
@@ -88,7 +88,7 @@ void main() {
       await repository.dispose(username: 'You', item: item);
     }
     final snapshot =
-        await repository.loadProfile(username: 'You', campus: 'Main Campus');
+        await repository.loadProfile(username: 'You', groupName: 'General Community', city: 'Local Area');
     expect(snapshot.user.ecoPoints, 100);
     expect(
       snapshot.badges
@@ -98,18 +98,23 @@ void main() {
     );
   });
 
-  test('disposing never moves the user to another campus', () async {
-    await repository.loadProfile(username: 'You', campus: 'Science Block');
+  test('disposing never moves the user to another group', () async {
+    await repository.loadProfile(
+      username: 'You',
+      groupName: 'Apartment Society',
+      city: 'Coimbatore',
+    );
     final item = classifier.classify(presetKeyword: 'box');
     final after = await repository.dispose(username: 'You', item: item);
 
-    expect(after.user.campus, 'Science Block');
+    expect(after.user.groupName, 'Apartment Society');
+    expect(after.user.city, 'Coimbatore');
   });
 
   test('the seeded demo users populate both leaderboards', () async {
-    final standings = await repository.campusStandings();
+    final standings = await repository.groupStandings();
     expect(standings.length, 4);
-    expect(standings.first.campus, 'North Campus');
+    expect(standings.first.groupName, 'Home & Family');
     expect(standings.first.totalPoints, 145);
     expect(standings.first.members, 1);
 

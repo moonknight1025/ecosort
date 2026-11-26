@@ -16,7 +16,8 @@ import 'key_value_store.dart';
 class _UserRecord {
   _UserRecord({
     required this.username,
-    required this.campus,
+    required this.groupName,
+    required this.city,
     required this.points,
     required this.bins,
     required this.completedDays,
@@ -26,7 +27,8 @@ class _UserRecord {
   });
 
   final String username;
-  String campus;
+  String groupName;
+  String city;
   int points;
   final Map<WasteCategory, int> bins;
   final Set<int> completedDays;
@@ -34,10 +36,16 @@ class _UserRecord {
   int plasticDisposals;
   int hazardDisposals;
 
-  factory _UserRecord.seeded(String username, String campus, int points) {
+  factory _UserRecord.seeded(
+    String username,
+    String groupName,
+    String city,
+    int points,
+  ) {
     return _UserRecord(
       username: username,
-      campus: campus,
+      groupName: groupName,
+      city: city,
       points: points,
       bins: <WasteCategory, int>{
         for (final WasteCategory category in WasteCategory.values) category: 0,
@@ -51,7 +59,8 @@ class _UserRecord {
 
   Map<String, dynamic> toJson() => <String, dynamic>{
         'username': username,
-        'campus': campus,
+        'group_name': groupName,
+        'city': city,
         'points': points,
         'bins': <String, int>{
           for (final MapEntry<WasteCategory, int> entry in bins.entries)
@@ -68,7 +77,10 @@ class _UserRecord {
         (json['bins'] as Map<String, dynamic>?) ?? <String, dynamic>{};
     return _UserRecord(
       username: (json['username'] as String?) ?? '',
-      campus: (json['campus'] as String?) ?? defaultCampus,
+      groupName: (json['group_name'] as String?) ??
+          (json['campus'] as String?) ??
+          defaultGroup,
+      city: (json['city'] as String?) ?? defaultCity,
       points: (json['points'] as num?)?.toInt() ?? 0,
       bins: <WasteCategory, int>{
         for (final WasteCategory category in WasteCategory.values)
@@ -125,11 +137,16 @@ class LocalRepository implements EcoSortRepository {
       }
     }
     if (_users.isEmpty) {
-      for (final ({String username, String campus, int points}) sample
-          in sampleUsers) {
+      for (final ({
+        String username,
+        String groupName,
+        String city,
+        int points
+      }) sample in sampleUsers) {
         _users[sample.username] = _UserRecord.seeded(
           sample.username,
-          sample.campus,
+          sample.groupName,
+          sample.city,
           sample.points,
         );
       }
@@ -150,19 +167,23 @@ class LocalRepository implements EcoSortRepository {
   /// challenge claim must never silently move the user to another campus.
   Future<_UserRecord> _recordFor(
     String username,
-    String campus, {
-    bool applyCampus = false,
+    String groupName,
+    String city, {
+    bool applyGroup = false,
   }) async {
     await _ensureLoaded();
     final _UserRecord? existing = _users[username];
     if (existing != null) {
-      if (applyCampus && existing.campus != campus) {
-        existing.campus = campus;
+      if (applyGroup &&
+          (existing.groupName != groupName || existing.city != city)) {
+        existing.groupName = groupName;
+        existing.city = city;
         await _persist();
       }
       return existing;
     }
-    final _UserRecord created = _UserRecord.seeded(username, campus, 0);
+    final _UserRecord created =
+        _UserRecord.seeded(username, groupName, city, 0);
     _users[username] = created;
     await _persist();
     return created;
@@ -172,7 +193,8 @@ class LocalRepository implements EcoSortRepository {
     return AppSnapshot(
       user: UserProfile(
         username: record.username,
-        campus: record.campus,
+        groupName: record.groupName,
+        city: record.city,
         ecoPoints: record.points,
       ),
       badges: evaluateBadges(
@@ -199,10 +221,11 @@ class LocalRepository implements EcoSortRepository {
   @override
   Future<AppSnapshot> loadProfile({
     required String username,
-    required String campus,
+    required String groupName,
+    required String city,
   }) async {
     final _UserRecord record =
-        await _recordFor(username, campus, applyCampus: true);
+        await _recordFor(username, groupName, city, applyGroup: true);
     return _snapshot(record);
   }
 
@@ -236,7 +259,8 @@ class LocalRepository implements EcoSortRepository {
     required WasteClassification item,
   }) async {
     // Points always come from the classification, never from the caller.
-    final _UserRecord record = await _recordFor(username, defaultCampus);
+    final _UserRecord record =
+        await _recordFor(username, defaultGroup, defaultCity);
     record.points += item.points;
     record.bins[item.category] = (record.bins[item.category] ?? 0) + 1;
     record.totalDisposals += 1;
@@ -255,7 +279,8 @@ class LocalRepository implements EcoSortRepository {
     required String username,
     required int day,
   }) async {
-    final _UserRecord record = await _recordFor(username, defaultCampus);
+    final _UserRecord record =
+        await _recordFor(username, defaultGroup, defaultCity);
     if (!record.completedDays.contains(day)) {
       record.completedDays.add(day);
       record.points += challengeReward;
@@ -265,30 +290,30 @@ class LocalRepository implements EcoSortRepository {
   }
 
   @override
-  Future<List<CampusStanding>> campusStandings() async {
+  Future<List<GroupStanding>> groupStandings() async {
     await _ensureLoaded();
     final Map<String, ({int points, int members})> totals =
         <String, ({int points, int members})>{};
     for (final _UserRecord record in _users.values) {
       final ({int points, int members}) current =
-          totals[record.campus] ?? (points: 0, members: 0);
-      totals[record.campus] = (
+          totals[record.groupName] ?? (points: 0, members: 0);
+      totals[record.groupName] = (
         points: current.points + record.points,
         members: current.members + 1,
       );
     }
-    final List<CampusStanding> standings = <CampusStanding>[
+    final List<GroupStanding> standings = <GroupStanding>[
       for (final MapEntry<String, ({int points, int members})> entry
           in totals.entries)
-        CampusStanding(
-          campus: entry.key,
+        GroupStanding(
+          groupName: entry.key,
           totalPoints: entry.value.points,
           members: entry.value.members,
         ),
     ];
-    standings.sort((CampusStanding a, CampusStanding b) {
+    standings.sort((GroupStanding a, GroupStanding b) {
       final int byPoints = b.totalPoints.compareTo(a.totalPoints);
-      return byPoints != 0 ? byPoints : a.campus.compareTo(b.campus);
+      return byPoints != 0 ? byPoints : a.groupName.compareTo(b.groupName);
     });
     return standings;
   }
@@ -305,7 +330,8 @@ class LocalRepository implements EcoSortRepository {
       for (final _UserRecord record in sorted.take(10))
         LeaderboardEntry(
           username: record.username,
-          campus: record.campus,
+          groupName: record.groupName,
+          city: record.city,
           points: record.points,
         ),
     ];

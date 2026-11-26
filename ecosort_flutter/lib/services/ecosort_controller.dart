@@ -24,11 +24,13 @@ class EcoSortController extends ChangeNotifier {
     LocalRepository? local,
     Uri? apiBaseUrl,
     String initialUsername = 'You',
-    String initialCampus = defaultCampus,
+    String initialGroup = defaultGroup,
+    String initialCity = defaultCity,
   })  : _local = local ?? LocalRepository(store: store ?? PreferencesKeyValueStore()),
         _apiBaseUrl = apiBaseUrl ?? defaultApiBaseUrl,
         _username = initialUsername,
-        _campus = initialCampus;
+        _groupName = initialGroup,
+        _city = initialCity;
 
   final LocalRepository _local;
   final Uri _apiBaseUrl;
@@ -40,25 +42,27 @@ class EcoSortController extends ChangeNotifier {
   DataMode _mode = DataMode.local;
   AppSnapshot? _snapshot;
   WasteClassification? _classification;
-  List<CampusStanding> _campusStandings = const <CampusStanding>[];
+  List<GroupStanding> _groupStandings = const <GroupStanding>[];
   List<LeaderboardEntry> _topUsers = const <LeaderboardEntry>[];
   bool _busy = false;
   String? _notice;
   String? _error;
   String _username;
-  String _campus;
+  String _groupName;
+  String _city;
   bool _initialised = false;
 
   DataMode get mode => _mode;
   AppSnapshot? get snapshot => _snapshot;
   WasteClassification? get classification => _classification;
-  List<CampusStanding> get campusStandings => _campusStandings;
+  List<GroupStanding> get groupStandings => _groupStandings;
   List<LeaderboardEntry> get topUsers => _topUsers;
   bool get busy => _busy;
   String? get notice => _notice;
   String? get error => _error;
   String get username => _username;
-  String get campus => _campus;
+  String get groupName => _groupName;
+  String get city => _city;
 
   /// Loads the profile once; safe to call from `initState`.
   Future<void> initialise() async {
@@ -92,7 +96,11 @@ class EcoSortController extends ChangeNotifier {
     await _reload();
   }
 
-  Future<void> setProfile({required String username, required String campus}) async {
+  Future<void> setProfile({
+    required String username,
+    required String groupName,
+    required String city,
+  }) async {
     final String trimmed = username.trim();
     if (trimmed.isEmpty) {
       _error = 'Enter a name first.';
@@ -100,7 +108,8 @@ class EcoSortController extends ChangeNotifier {
       return;
     }
     _username = trimmed;
-    _campus = campus;
+    _groupName = groupName.trim().isEmpty ? defaultGroup : groupName.trim();
+    _city = city.trim().isEmpty ? defaultCity : city.trim();
     _classification = null;
     await _reload();
   }
@@ -110,8 +119,11 @@ class EcoSortController extends ChangeNotifier {
     notifyListeners();
     try {
       _snapshot = await _withFallback(
-        (EcoSortRepository repo) =>
-            repo.loadProfile(username: _username, campus: _campus),
+        (EcoSortRepository repo) => repo.loadProfile(
+          username: _username,
+          groupName: _groupName,
+          city: _city,
+        ),
       );
       _error = null;
     } catch (error) {
@@ -140,13 +152,13 @@ class EcoSortController extends ChangeNotifier {
   Future<void> refreshLeaderboards() async {
     final DataMode before = _mode;
     try {
-      _campusStandings = await _withFallback(
-        (EcoSortRepository repo) => repo.campusStandings(),
+      _groupStandings = await _withFallback(
+        (EcoSortRepository repo) => repo.groupStandings(),
       );
       _topUsers = await _withFallback(
         (EcoSortRepository repo) => repo.topUsers(),
       );
-      if (_campusStandings.isEmpty && _topUsers.isEmpty) {
+      if (_groupStandings.isEmpty && _topUsers.isEmpty) {
         _error ??= 'No leaderboard data yet.';
       }
     } catch (error) {
@@ -155,7 +167,11 @@ class EcoSortController extends ChangeNotifier {
     if (before != _mode) {
       // The fallback happened mid-refresh: re-read the profile locally so the
       // points on screen match the standings underneath them.
-      _snapshot = await _local.loadProfile(username: _username, campus: _campus);
+      _snapshot = await _local.loadProfile(
+        username: _username,
+        groupName: _groupName,
+        city: _city,
+      );
     }
     notifyListeners();
   }

@@ -68,9 +68,14 @@ BIN_META = {
 
 FALLBACK_CATEGORY = "Dry Waste"
 FALLBACK_POINTS = 10
+LOCAL_RULES_NOTE = (
+    "Rules vary by municipality — check your local waste collection guidance "
+    "for what your area actually recycles."
+)
+
 FALLBACK_INSTRUCTIONS = (
     "We could not match this item to a known stream. Bag it and drop it in the "
-    "gray dry-waste bin; a campus volunteer will re-sort it."
+    "gray dry-waste bin; a collection volunteer will re-sort it."
 )
 
 # Badge rules (PRD 4.2) expressed as category groups, so the SQL below never
@@ -108,7 +113,7 @@ CATALOG_SEED: list[tuple[str, str, str, str, int]] = [
         "Banana Peel",
         "Wet Waste",
         "Drop it in the green wet-waste bin, ideally loose rather than in a "
-        "plastic bag, so the campus compost pile can take it.",
+        "plastic bag, so the community compost pile can take it.",
         10,
     ),
     (
@@ -209,13 +214,37 @@ CATALOG_SEED: list[tuple[str, str, str, str, int]] = [
     ),
 ]
 
-# (username, campus, eco_points) - seeded so the campus battle is populated.
-CAMPUSES = ("North Campus", "South Hostel", "Science Block", "Main Campus")
-USER_SEED: list[tuple[str, str, int]] = [
-    ("Aarav", "North Campus", 145),
-    ("Meera", "South Hostel", 120),
-    ("Kabir", "Science Block", 95),
-    ("Diya", "Main Campus", 80),
+# --- Universal community model (no campus assumptions) --------------------
+# `GROUP_PRESETS` are suggestions, not a whitelist: any household, street,
+# society, office or region may type its own group name.
+DEFAULT_GROUP = "General Community"
+DEFAULT_CITY = "Local Area"
+GROUP_PRESETS: tuple[str, ...] = (
+    "General Community",
+    "Home & Family",
+    "Neighborhood / Ward",
+    "Apartment Society",
+    "Workplace / Office",
+)
+CITY_PRESETS: tuple[str, ...] = (
+    "Local Area",
+    "Chennai",
+    "Coimbatore",
+    "Madurai",
+    "Bengaluru",
+    "Mumbai",
+    "Delhi",
+)
+MAX_GROUP_LENGTH = 48
+MAX_CITY_LENGTH = 48
+
+# (username, group_name, city, eco_points) — populated so the group
+# standings have something to rank on first launch.
+USER_SEED: list[tuple[str, str, str, int]] = [
+    ("Aarav", "Home & Family", "Chennai", 145),
+    ("Meera", "Apartment Society", "Chennai", 120),
+    ("Kabir", "Workplace / Office", "Bengaluru", 95),
+    ("Diya", "General Community", "Local Area", 80),
 ]
 
 # Seven-Day Zero-Waste Challenge (PRD section 4.2). Day -> task text.
@@ -226,7 +255,7 @@ CHALLENGE_TASKS = {
     4: "Compost the day's food scraps",
     5: "Audit your desk for e-waste",
     6: "Rinse and recycle three containers",
-    7: "Invite a campus peer to join EcoSort",
+    7: "Invite a neighbour or colleague to join EcoSort",
 }
 CHALLENGE_REWARD = 15
 
@@ -243,7 +272,8 @@ SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS users (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     username    TEXT UNIQUE NOT NULL,
-    campus      TEXT DEFAULT 'Main Campus',
+    group_name  TEXT DEFAULT 'General Community',
+    city        TEXT DEFAULT 'Local Area',
     eco_points  INTEGER DEFAULT 0,
     streak_days INTEGER DEFAULT 1
 );
@@ -276,6 +306,13 @@ CREATE TABLE IF NOT EXISTS user_challenges (
     UNIQUE (user_id, day_number)
 );
 
+"""
+
+# Indexes are created *after* the additive migrations in init_db(): a legacy
+# database has no ``client_token`` column yet, and creating this index in the
+# same script as the tables would abort the whole boot with
+# "no such column: client_token".
+INDEX_SQL = """
 -- Every badge, bin count and leaderboard query filters on this column.
 CREATE INDEX IF NOT EXISTS idx_disposal_user ON disposal_logs(user_id);
 
@@ -285,6 +322,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_disposal_token
     ON disposal_logs(user_id, client_token)
     WHERE client_token IS NOT NULL;
 """
+
 
 
 def catalog_rows() -> list[tuple[str, str, str, str, str, int]]:
@@ -316,6 +354,47 @@ def validate_domain_constants() -> None:
     orphan_aliases = set(CATALOG_ALIASES.values()) - {row[0] for row in CATALOG_SEED}
     if orphan_aliases:
         raise ValueError(f"aliases point at missing keywords: {sorted(orphan_aliases)}")
+
+
+def _migrate_campus_to_group(connection: sqlite3.Connection) -> None:
+    """Upgrade pre-generalisation databases in place.
+
+    Older installs have ``users.campus`` and no ``group_name``/``city``. The
+    column is added, existing values are copied into ``group_name``, and only
+    then is the legacy column dropped (SQLite >= 3.35), so a database created
+    during the campus era keeps every user and every point.
+    """
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(users)")}
+    if not columns:
+        return  # table does not exist yet; SCHEMA_SQL will create it
+
+    if "group_name" not in columns:
+        connection.execute(
+            f"ALTER TABLE users ADD COLUMN group_name TEXT DEFAULT '{DEFAULT_GROUP}'"
+        )
+    if "city" not in columns:
+        connection.execute(
+            f"ALTER TABLE users ADD COLUMN city TEXT DEFAULT '{DEFAULT_CITY}'"
+        )
+    if "campus" in columns:
+        connection.execute(
+            """
+            UPDATE users
+            SET group_name = COALESCE(NULLIF(campus, ''), ?)
+            WHERE group_name IS NULL OR group_name = ? OR group_name = ''
+            """,
+            (DEFAULT_GROUP, DEFAULT_GROUP),
+        )
+        connection.execute(
+            "UPDATE users SET city = ? WHERE city IS NULL OR city = ''",
+            (DEFAULT_CITY,),
+        )
+        try:
+            connection.execute("ALTER TABLE users DROP COLUMN campus")
+        except sqlite3.OperationalError:
+            # Older SQLite cannot drop a column; leaving it is harmless because
+            # nothing reads it any more.
+            pass
 
 
 def _migrate_disposal_tokens(connection: sqlite3.Connection) -> None:
@@ -352,7 +431,9 @@ def init_db(database_path: str | None = None) -> None:
     try:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.executescript(SCHEMA_SQL)
+        _migrate_campus_to_group(connection)
         _migrate_disposal_tokens(connection)
+        connection.executescript(INDEX_SQL)
         connection.executemany(
             """
             INSERT OR IGNORE INTO waste_catalog
@@ -362,7 +443,10 @@ def init_db(database_path: str | None = None) -> None:
             catalog_rows(),
         )
         connection.executemany(
-            "INSERT OR IGNORE INTO users (username, campus, eco_points) VALUES (?, ?, ?)",
+            """
+            INSERT OR IGNORE INTO users (username, group_name, city, eco_points)
+            VALUES (?, ?, ?, ?)
+            """,
             USER_SEED,
         )
         # Give every known user one row per challenge day; UNIQUE(user_id, day_number)
@@ -398,7 +482,8 @@ def user_payload(row: sqlite3.Row) -> dict:
     return {
         "id": row["id"],
         "username": row["username"],
-        "campus": row["campus"],
+        "group_name": row["group_name"],
+        "city": row["city"],
         "eco_points": row["eco_points"],
     }
 
@@ -602,7 +687,7 @@ def analyze_waste(
     result = dict(classify_waste(keyword_text, image_path, connection=connection))
     result.update(
         {
-            "source": "rules",
+            "source": "offline_fallback",
             "confidence": None,
             "preparation_steps": [],
             "why": "",
@@ -753,7 +838,11 @@ def create_or_fetch_user():
     """Create a profile or return the existing one, then initialise its state.
 
     Idempotent by design: a repeat call for a known username preserves
-    ``eco_points`` and the challenge rows, and only refreshes the campus.
+    ``eco_points`` and the challenge rows, and only refreshes the group and city.
+
+    ``group_name``/``community``/``campus`` are accepted as aliases so older
+    clients (and campus-era bookmarks) keep working; the value is free text, not
+    a whitelist, because any household, street, society or office may join.
     """
     payload = request.get_json(silent=True)
     if payload is None and request.get_data(cache=True):
@@ -772,22 +861,41 @@ def create_or_fetch_user():
             400,
         )
 
-    campus = str(payload.get("campus") or "").strip() or "Main Campus"
-    if campus not in CAMPUSES:
-        # Never silently coerce: a typo'd campus would otherwise disappear into
-        # the Main Campus total without the client ever knowing.
-        return jsonify({"error": "unknown campus", "allowed": list(CAMPUSES)}), 400
+    group_name = str(
+        payload.get("group_name")
+        or payload.get("community")
+        or payload.get("campus")
+        or ""
+    ).strip() or DEFAULT_GROUP
+    city = str(payload.get("city") or payload.get("region") or "").strip() or DEFAULT_CITY
+
+    if len(group_name) > MAX_GROUP_LENGTH:
+        return (
+            jsonify(
+                {"error": f"group_name must be {MAX_GROUP_LENGTH} characters or fewer"}
+            ),
+            400,
+        )
+    if len(city) > MAX_CITY_LENGTH:
+        return (
+            jsonify({"error": f"city must be {MAX_CITY_LENGTH} characters or fewer"}),
+            400,
+        )
 
     db = get_db()
     row = db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
     if row is None:
         db.execute(
-            "INSERT INTO users (username, campus) VALUES (?, ?)", (username, campus)
+            "INSERT INTO users (username, group_name, city) VALUES (?, ?, ?)",
+            (username, group_name, city),
         )
         db.commit()
         row = db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
-    elif campus != row["campus"]:
-        db.execute("UPDATE users SET campus = ? WHERE id = ?", (campus, row["id"]))
+    elif group_name != row["group_name"] or city != row["city"]:
+        db.execute(
+            "UPDATE users SET group_name = ?, city = ? WHERE id = ?",
+            (group_name, city, row["id"]),
+        )
         db.commit()
         row = db.execute("SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone()
 
@@ -865,6 +973,7 @@ def identify_waste():
     )
     if vision_note:
         result["vision_error"] = vision_note
+    result["local_note"] = LOCAL_RULES_NOTE
     result["image_url"] = image_url
     return jsonify(result)
 
@@ -1021,26 +1130,26 @@ def complete_challenge():
 
 @app.get("/api/leaderboard")
 def leaderboard():
-    """Top ten users by points, plus campus totals aggregated in SQL.
+    """Top contributors overall, plus group/community standings.
 
-    Campus totals are computed by the database with the same rows the ranking
-    reads, so a campus total can never disagree with the sum of its members.
-    Ties break on the primary key, which makes the order deterministic and the
+    Both lists are plain SQL over the same rows, so a group total can never
+    disagree with the sum of its members. Ties break on the primary key (users)
+    and on the group name (groups), which keeps the order deterministic and the
     verification suite non-flaky.
     """
     db = get_db()
     users = db.execute(
-        "SELECT id, username, campus, eco_points FROM users "
+        "SELECT id, username, group_name, city, eco_points FROM users "
         "ORDER BY eco_points DESC, id ASC LIMIT 10"
     ).fetchall()
-    campuses = db.execute(
+    groups = db.execute(
         """
-        SELECT campus,
+        SELECT group_name,
                SUM(eco_points) AS total_points,
                COUNT(*) AS members
         FROM users
-        GROUP BY campus
-        ORDER BY total_points DESC, campus ASC
+        GROUP BY group_name
+        ORDER BY total_points DESC, group_name ASC
         """
     ).fetchall()
 
@@ -1050,18 +1159,19 @@ def leaderboard():
                 {
                     "id": row["id"],
                     "username": row["username"],
-                    "campus": row["campus"],
+                    "group_name": row["group_name"],
+                    "city": row["city"],
                     "eco_points": row["eco_points"],
                 }
                 for row in users
             ],
-            "campuses": [
+            "groups": [
                 {
-                    "campus": row["campus"],
+                    "group_name": row["group_name"],
                     "total_points": row["total_points"],
                     "members": row["members"],
                 }
-                for row in campuses
+                for row in groups
             ],
         }
     )
@@ -1083,7 +1193,9 @@ def capabilities():
                 }
                 for category, meta in BIN_META.items()
             ],
-            "campuses": list(CAMPUSES),
+            "group_presets": list(GROUP_PRESETS),
+            "city_presets": list(CITY_PRESETS),
+            "defaults": {"group_name": DEFAULT_GROUP, "city": DEFAULT_CITY},
         }
     )
 
@@ -1093,7 +1205,10 @@ def index():
     """Serve the single-page shell with its canonical domain constants."""
     return render_template(
         "index.html",
-        campuses=CAMPUSES,
+        group_presets=GROUP_PRESETS,
+        city_presets=CITY_PRESETS,
+        default_group=DEFAULT_GROUP,
+        default_city=DEFAULT_CITY,
         bins=[(category, meta) for category, meta in BIN_META.items()],
         badges=BADGES,
         challenge_tasks=CHALLENGE_TASKS,

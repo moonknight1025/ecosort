@@ -1,4 +1,4 @@
-# EcoSort — smart waste segregation for campuses
+# EcoSort — smart waste segregation for everyone
 
 One repository, two applications that share one set of domain rules:
 
@@ -8,8 +8,19 @@ One repository, two applications that share one set of domain rules:
 | `ecosort_flutter/` | Mobile-first Flutter Web client (Material 3) with an offline mode | Dart 3.14 / Flutter 3.50, `material_ui`, `camera` |
 
 Both classify waste into the same five streams, award the same points, evaluate
-the same four badges, run the same 7-day challenge, and rank the same four
-campuses. Product goal: make every piece of waste count.
+the same four badges, run the same 7-day challenge, and rank contributions by
+**community / group** — with no campus assumption anywhere.
+
+### Who it is for
+
+Anyone: a single household, a family, a street or ward, an apartment society, a
+workplace floor, a school club, or a whole city. A profile is a name plus a
+free-text **community / group** and **city / region** (defaults:
+`General Community` and `Local Area`). The five group presets are suggestions,
+not a whitelist — type `My Flat 4B` and the standings will rank it.
+
+Two leaderboards are shown: **Top Eco Contributors** (every user, by points) and
+**Community & Group Standings** (points summed per group, with member counts).
 
 ## 1. Preview it in your browser (fastest path)
 
@@ -21,11 +32,13 @@ python app.py                                   # -> http://127.0.0.1:5000
 
 Open **http://127.0.0.1:5000** and:
 
-1. Type a name, pick a campus, press **Set profile**.
+1. Type a name, optionally pick or type a community/group and a city, press
+   **Set profile**.
 2. **Start camera** → allow the permission prompt → **Capture Photo**, or press
    **Upload photo** / tap one of the six sample chips.
 3. Read the disposal guide, then **Toss into Virtual Bin**.
-4. Check **Badges & 7-Day** (claim a day for +15) and **Campus Rank**.
+4. Check **Badges & 7-Day** (claim a day for +15) and **Leaderboards** — *Top Eco
+   Contributors* + *Community & Group Standings*.
 
 Camera needs a secure context: `http://127.0.0.1` and `http://localhost` count as
 secure, a LAN IP (`http://192.168.x.x`) does **not** — the UI tells you and falls
@@ -129,11 +142,25 @@ limit. That is the deliberate trade-off for shipping without Redis.
 | `POST /api/identify` | classify a camera frame, upload or preset keyword |
 | `POST /api/dispose` | log a disposal; points re-derived server-side, `client_token` idempotency |
 | `POST /api/challenge/complete` | claim one challenge day, +15 exactly once |
-| `GET /api/leaderboard` | top 10 users + campus totals |
+| `GET /api/leaderboard` | top 10 contributors + group/community totals |
 
 `database.db` bootstraps itself on the first request: four tables, 13 catalog
-items, 4 seeded campus users, 7 challenge days, all via `INSERT OR IGNORE`.
-CORS is open so the Flutter client can call the API from another dev origin.
+items, 4 seeded demo users across different groups and cities, 7 challenge days,
+all via `INSERT OR IGNORE`. CORS is open so the Flutter client can call the API
+from another dev origin.
+
+### Upgrading an existing database
+
+Migrations are additive and run before any index is created, so an older
+`database.db` upgrades in place:
+
+- campus-era installs: `users.campus` is copied into `group_name`, `city` is
+  filled with `Local Area`, and the legacy column is dropped (SQLite >= 3.35;
+  left in place otherwise, and no longer read);
+- pre-`client_token` installs: the column and its partial unique index are added;
+- users, points and disposal history are preserved. Verified by check 13 in
+  `tests/verify_api.py`, which boots a campus-era schema and asserts nothing is
+  lost.
 
 ## 5. Tests
 
@@ -165,7 +192,7 @@ These literals exist twice (Python and Dart) and must stay identical:
 | `CATALOG_SEED` / `CATALOG_ALIASES` | `lib/data/waste_catalog.dart` |
 | `CHALLENGE_TASKS`, `CHALLENGE_REWARD` | `lib/data/challenge_catalog.dart` |
 | `BADGES` | `lib/data/gamification.dart` |
-| `CAMPUSES` | `lib/models/user_profile.dart` |
+| `GROUP_PRESETS` / `CITY_PRESETS` / defaults | `lib/models/user_profile.dart` |
 | `classify_waste()` | `lib/data/classifier.dart` |
 
 Both use the same token-first matching rule (a keyword matches a whole token, or
@@ -182,7 +209,11 @@ a substring only when it is at least 5 characters), which is what keeps the
 | M4 badges, challenge, leaderboards | done |
 | M5 automated API suite + browser E2E | done |
 | Flutter Web client | done |
-| Camera capture + AI vision + rate limiting | done (this release) |
+| Camera capture + AI vision + rate limiting | done |
+| Universal profiles (community / group + city) | done (this release) |
 
 Still open: no `LICENSE` file (a Product Owner decision). No auth: any client can
-act as any user, and the leaderboard is not evidence of real behaviour.
+act as any user, and the leaderboard is not evidence of real behaviour. Group
+names are free text, so a typo creates a new group rather than being rejected —
+that is the deliberate trade-off for letting anyone join without a list to
+maintain.

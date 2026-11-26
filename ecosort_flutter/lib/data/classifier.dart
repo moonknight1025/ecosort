@@ -75,7 +75,7 @@ class WasteClassifier {
       category: WasteCategory.dry,
       instructions:
           'We could not match this item to a known stream. Bag it and drop it '
-          'in the gray dry-waste bin; a campus volunteer will re-sort it.',
+          'in the gray dry-waste bin; a collection volunteer will re-sort it.',
       points: 10,
       isFallback: true,
     );
