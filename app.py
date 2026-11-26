@@ -232,6 +232,7 @@ CREATE TABLE IF NOT EXISTS disposal_logs (
     item_name    TEXT NOT NULL,
     category     TEXT NOT NULL,
     points_earned INTEGER NOT NULL,
+    client_token TEXT,
     timestamp    DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -245,6 +246,12 @@ CREATE TABLE IF NOT EXISTS user_challenges (
 
 -- Every badge, bin count and leaderboard query filters on this column.
 CREATE INDEX IF NOT EXISTS idx_disposal_user ON disposal_logs(user_id);
+
+-- A retried disposal must not double-credit points. Partial index so rows
+-- written before this column existed (token NULL) stay valid.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_disposal_token
+    ON disposal_logs(user_id, client_token)
+    WHERE client_token IS NOT NULL;
 """
 
 
@@ -279,13 +286,33 @@ def validate_domain_constants() -> None:
         raise ValueError(f"aliases point at missing keywords: {sorted(orphan_aliases)}")
 
 
-def init_db(database_path: str = DATABASE_PATH) -> None:
+def _migrate_disposal_tokens(connection: sqlite3.Connection) -> None:
+    """Add ``disposal_logs.client_token`` to databases created before M3.
+
+    ``CREATE TABLE IF NOT EXISTS`` cannot alter an existing table, and the demo
+    database is gitignored generated state that people keep between runs, so the
+    column is added in place instead of forcing a delete.
+    """
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(disposal_logs)")}
+    if "client_token" not in columns:
+        connection.execute("ALTER TABLE disposal_logs ADD COLUMN client_token TEXT")
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_disposal_token
+            ON disposal_logs(user_id, client_token)
+            WHERE client_token IS NOT NULL
+        """
+    )
+
+
+def init_db(database_path: str | None = None) -> None:
     """Create the upload directory, the schema and the seed rows.
 
     Idempotent: safe to call on every start. Seeds rely on the UNIQUE
     constraints shipped with the schema plus ``INSERT OR IGNORE``, so a second
     run writes nothing and never raises.
     """
+    database_path = database_path or DATABASE_PATH
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     validate_domain_constants()
 
@@ -293,6 +320,7 @@ def init_db(database_path: str = DATABASE_PATH) -> None:
     try:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.executescript(SCHEMA_SQL)
+        _migrate_disposal_tokens(connection)
         connection.executemany(
             """
             INSERT OR IGNORE INTO waste_catalog
@@ -512,6 +540,21 @@ def _bootstrap_once() -> None:
     ensure_bootstrapped()
 
 
+@app.after_request
+def _cors_headers(response):
+    """Allow the Flutter Web client (a different origin in dev) to call the API.
+
+    Wide-open by design: there is no auth in V1, the data is not sensitive and
+    the alternative is a client that silently falls back to local mode. A
+    deployment with real users needs an explicit origin allowlist instead.
+    """
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Accept"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Vary"] = "Origin"
+    return response
+
+
 @app.teardown_appcontext
 def close_db(_exception: BaseException | None = None) -> None:
     connection = g.pop("db", None)
@@ -616,6 +659,204 @@ def identify_waste():
     result = classify_waste(keyword, image_path or original_name or None)
     result["image_url"] = image_url
     return jsonify(result)
+
+
+@app.post("/api/dispose")
+def dispose_waste():
+    """Log a disposal, award points and return the refreshed user state.
+
+    The contract in the PRD lets the client send ``category`` and ``points``.
+    Those fields are **ignored**: the value is re-derived here from
+    ``waste_catalog`` through ``classify_waste``, because there is no auth in
+    V1 and a trusting server would let any client award itself 999999 points.
+
+    Idempotency comes from ``client_token`` (server-generated when absent) and
+    the unique partial index on ``(user_id, client_token)``, so a retried request
+    returns the original result instead of double-crediting.
+    """
+    payload = request.get_json(silent=True)
+    if payload is None and request.get_data(cache=True):
+        return jsonify({"error": "invalid JSON body"}), 400
+    if not isinstance(payload, dict):
+        payload = {}
+
+    user_id = payload.get("user_id")
+    if not isinstance(user_id, int) or isinstance(user_id, bool):
+        return jsonify({"error": "user_id is required and must be an integer"}), 400
+
+    item_name = str(payload.get("item_name") or "").strip()
+    if not item_name:
+        return jsonify({"error": "item_name is required"}), 400
+    if len(item_name) > 120:
+        return jsonify({"error": "item_name must be 120 characters or fewer"}), 400
+
+    client_token = str(payload.get("client_token") or "").strip()
+    if len(client_token) > 64:
+        return jsonify({"error": "client_token must be 64 characters or fewer"}), 400
+    if not client_token:
+        client_token = uuid4().hex
+
+    db = get_db()
+    user = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    if user is None:
+        return jsonify({"error": "unknown user_id"}), 404
+
+    # Server-side truth. The client's category/points never reach the database.
+    resolved = classify_waste(item_name)
+
+    duplicate = db.execute(
+        "SELECT id FROM disposal_logs WHERE user_id = ? AND client_token = ?",
+        (user_id, client_token),
+    ).fetchone()
+    if duplicate is None:
+        try:
+            db.execute(
+                """
+                INSERT INTO disposal_logs
+                    (user_id, item_name, category, points_earned, client_token)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    user_id,
+                    item_name,
+                    resolved["category"],
+                    resolved["points"],
+                    client_token,
+                ),
+            )
+            db.execute(
+                "UPDATE users SET eco_points = eco_points + ? WHERE id = ?",
+                (resolved["points"], user_id),
+            )
+            db.commit()
+        except sqlite3.IntegrityError:
+            # Lost a race to an identical token; the first write already
+            # credited the points, so fall through and report current state.
+            db.rollback()
+            duplicate = True
+
+    row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    return jsonify(
+        {
+            "new_points": row["eco_points"],
+            "badges": badge_states(db, user_id, row["eco_points"]),
+            "bin_counts": bin_counts_for(db, user_id),
+            "logged": {
+                "item_name": item_name,
+                "category": resolved["category"],
+                "bin_color": resolved["bin_color"],
+                "points": resolved["points"],
+                "fallback": resolved["fallback"],
+            },
+            "duplicate": duplicate is not None,
+        }
+    )
+
+
+@app.post("/api/challenge/complete")
+def complete_challenge():
+    """Mark one challenge day complete; award +15 exactly once.
+
+    The write is a single conditional UPDATE guarded by ``completed = 0`` and
+    its ``rowcount``, not a read-then-write: two concurrent claims would both
+    pass a read, and the second would raise ``IntegrityError`` (HTTP 500) where
+    the contract promises "+0".
+    """
+    payload = request.get_json(silent=True)
+    if payload is None and request.get_data(cache=True):
+        return jsonify({"error": "invalid JSON body"}), 400
+    if not isinstance(payload, dict):
+        payload = {}
+
+    user_id = payload.get("user_id")
+    if not isinstance(user_id, int) or isinstance(user_id, bool):
+        return jsonify({"error": "user_id is required and must be an integer"}), 400
+
+    day_number = payload.get("day_number")
+    if not isinstance(day_number, int) or isinstance(day_number, bool):
+        return jsonify({"error": "day_number is required and must be an integer"}), 400
+    if day_number not in CHALLENGE_TASKS:
+        return jsonify({"error": f"day_number must be between 1 and {len(CHALLENGE_TASKS)}"}), 400
+
+    db = get_db()
+    user = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    if user is None:
+        return jsonify({"error": "unknown user_id"}), 404
+
+    ensure_challenge_rows(db, user_id)
+    cursor = db.execute(
+        """
+        UPDATE user_challenges
+        SET completed = 1
+        WHERE user_id = ? AND day_number = ? AND completed = 0
+        """,
+        (user_id, day_number),
+    )
+    awarded = cursor.rowcount == 1
+    if awarded:
+        db.execute(
+            "UPDATE users SET eco_points = eco_points + ? WHERE id = ?",
+            (CHALLENGE_REWARD, user_id),
+        )
+    db.commit()
+
+    row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    return jsonify(
+        {
+            "new_points": row["eco_points"],
+            "challenges": challenge_payload(db, user_id),
+            "awarded": awarded,
+            "awarded_points": CHALLENGE_REWARD if awarded else 0,
+        }
+    )
+
+
+@app.get("/api/leaderboard")
+def leaderboard():
+    """Top ten users by points, plus campus totals aggregated in SQL.
+
+    Campus totals are computed by the database with the same rows the ranking
+    reads, so a campus total can never disagree with the sum of its members.
+    Ties break on the primary key, which makes the order deterministic and the
+    verification suite non-flaky.
+    """
+    db = get_db()
+    users = db.execute(
+        "SELECT id, username, campus, eco_points FROM users "
+        "ORDER BY eco_points DESC, id ASC LIMIT 10"
+    ).fetchall()
+    campuses = db.execute(
+        """
+        SELECT campus,
+               SUM(eco_points) AS total_points,
+               COUNT(*) AS members
+        FROM users
+        GROUP BY campus
+        ORDER BY total_points DESC, campus ASC
+        """
+    ).fetchall()
+
+    return jsonify(
+        {
+            "users": [
+                {
+                    "id": row["id"],
+                    "username": row["username"],
+                    "campus": row["campus"],
+                    "eco_points": row["eco_points"],
+                }
+                for row in users
+            ],
+            "campuses": [
+                {
+                    "campus": row["campus"],
+                    "total_points": row["total_points"],
+                    "members": row["members"],
+                }
+                for row in campuses
+            ],
+        }
+    )
 
 
 @app.route("/")
