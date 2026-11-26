@@ -10,6 +10,8 @@ enum ClassificationSource {
 
   final String label;
 
+  /// `analysis_mode` is the documented field; `source` is accepted from older
+  /// servers, and anything unrecognised means the deterministic rules answered.
   static ClassificationSource fromApi(String? value) =>
       value == 'ai_vision' ? aiVision : rules;
 }
@@ -26,6 +28,7 @@ class WasteClassification {
     this.imageUrl,
     this.source = ClassificationSource.rules,
     this.confidence,
+    this.confidenceScore,
     this.preparationSteps = const <String>[],
     this.why = '',
     this.visionError,
@@ -47,8 +50,12 @@ class WasteClassification {
   /// AI vision or deterministic rules.
   final ClassificationSource source;
 
-  /// Model confidence in 0..1, or null for rule-based answers.
-  final double? confidence;
+  /// Model confidence band: "High", "Medium" or "Low". Null for rule answers —
+  /// the app never invents a confidence it was not given.
+  final String? confidence;
+
+  /// Optional numeric score, when a server supplies one alongside the band.
+  final double? confidenceScore;
 
   /// Concrete recycling/preparation steps from the vision model.
   final List<String> preparationSteps;
@@ -63,13 +70,16 @@ class WasteClassification {
 
   String get pointsLabel => '+$points pts';
 
-  /// `Confidence 91%`, or an empty string when the answer is rule-based.
+  /// `Confidence: High`, or an empty string when the answer is rule-based.
   String get confidenceLabel {
-    final double? value = confidence;
-    if (value == null) {
+    final String? band = confidence;
+    if (band == null || band.isEmpty) {
       return '';
     }
-    return 'Confidence ${(value * 100).round()}%';
+    final double? score = confidenceScore;
+    return score == null
+        ? 'Confidence: $band'
+        : 'Confidence: $band (${(score * 100).round()}%)';
   }
 
   /// Parsed from `POST /api/identify`. Kept here (not in the repository) so the
@@ -77,16 +87,23 @@ class WasteClassification {
   factory WasteClassification.fromApiJson(Map<String, dynamic> json) {
     final List<dynamic> rawSteps =
         (json['preparation_steps'] as List<dynamic>?) ?? const <dynamic>[];
+    final dynamic rawConfidence = json['confidence'];
     return WasteClassification(
-      displayName: (json['display_name'] as String?) ?? 'Unrecognized Item',
+      displayName: (json['item_name'] as String?) ??
+          (json['display_name'] as String?) ??
+          'Unrecognized Item',
       category: WasteCategory.fromLabel(json['category'] as String?),
       instructions: (json['instructions'] as String?) ?? '',
       points: (json['points'] as num?)?.toInt() ?? 10,
       isFallback: (json['fallback'] as bool?) ?? false,
       matchedKeyword: json['matched_keyword'] as String?,
       imageUrl: json['image_url'] as String?,
-      source: ClassificationSource.fromApi(json['source'] as String?),
-      confidence: (json['confidence'] as num?)?.toDouble(),
+      source: ClassificationSource.fromApi(
+        (json['analysis_mode'] as String?) ?? (json['source'] as String?),
+      ),
+      // The backend sends a band ("High"); an older server may send 0..1.
+      confidence: _bandFrom(rawConfidence, json['confidence_score']),
+      confidenceScore: _scoreFrom(rawConfidence, json['confidence_score']),
       preparationSteps: <String>[
         for (final dynamic step in rawSteps) step.toString(),
       ],
@@ -94,5 +111,28 @@ class WasteClassification {
       visionError: json['vision_error'] as String?,
       aiModel: json['ai_model'] as String?,
     );
+  }
+
+  static String? _bandFrom(dynamic value, dynamic score) {
+    if (value is String && value.trim().isNotEmpty) {
+      return value.trim();
+    }
+    final double? numeric = (value as num?)?.toDouble() ??
+        (score as num?)?.toDouble();
+    if (numeric == null) {
+      return null;
+    }
+    if (numeric >= 0.75) {
+      return 'High';
+    }
+    return numeric >= 0.45 ? 'Medium' : 'Low';
+  }
+
+  static double? _scoreFrom(dynamic value, dynamic score) {
+    final double? explicit = (score as num?)?.toDouble();
+    if (explicit != null) {
+      return explicit;
+    }
+    return value is num ? value.toDouble() : null;
   }
 }

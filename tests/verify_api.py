@@ -55,7 +55,13 @@ def main() -> int:
     # Pin the environment so an ambient .env or shell export cannot change what
     # this suite asserts. Functional checks get generous limits; the dedicated
     # rate-limit check tightens them and resets the counters itself.
-    for key in ("ECOSORT_AI_API_KEY", "ECOSORT_AI_ENABLED", "ECOSORT_AI_MODEL"):
+    for key in (
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "GEMINI_MODEL",
+        "GEMINI_TIMEOUT_SECONDS",
+        "ECOSORT_AI_API_KEY",
+    ):
         os.environ.pop(key, None)
     os.environ["RATE_LIMIT_ENABLED"] = "1"
     os.environ["RATE_LIMIT_IDENTIFY_PER_MIN"] = "1000"
@@ -376,77 +382,116 @@ def main() -> int:
             data={"image": (io.BytesIO(b"\xff\xd8jpeg"), "plastic_bottle_01.jpg")},
             content_type="multipart/form-data",
         ).get_json()
-        assert payload["source"] == "offline_fallback", (
-            f"expected offline_fallback, got {payload['source']}"
+        assert payload["analysis_mode"] == "offline_fallback", (
+            f"expected offline_fallback, got {payload['analysis_mode']}"
         )
+        assert payload["source"] == "offline_fallback", "source alias drifted"
         assert "municipal" in (payload.get("local_note") or ""), "local rules note missing"
         assert payload["vision_available"] is False, "vision reported available without a key"
-        assert payload["confidence"] is None, "rule answers carry no confidence"
-        assert payload["preparation_steps"] == [], "rule answers carry no AI steps"
-        return "source=offline_fallback, vision_available=false, no confidence/steps, local_note present"
+        assert payload["confidence"] is None, "rule answers must not claim a confidence"
+        assert payload["item_name"], "item_name missing on the rules path"
+        return (
+            "analysis_mode=offline_fallback, vision_available=false, "
+            "confidence=null, local_note present"
+        )
 
-    check("9. identify labels rule-based answers (no API key)", rules_provenance)
+    check("9. no GEMINI_API_KEY -> offline_fallback, no invented labels", rules_provenance)
 
     # ---------------------------------------------------------------- 10
-    def ai_vision_path() -> str:
-        os.environ["ECOSORT_AI_API_KEY"] = "test-key-not-real"
-        os.environ["ECOSORT_AI_MODEL"] = "gpt-4o-mini"
-        original = vision.analyze_image
-        try:
-            vision.analyze_image = lambda image_bytes, media_type="image/jpeg", **kw: {
-                "item": "Crushed PET bottle",
-                "category": "Recyclable Waste",
-                "confidence": 0.91,
-                "steps": ["Empty and rinse", "Remove the cap", "Flatten it"],
-                "why": "PET is accepted by campus recyclers.",
-                "suggested_points": 13,
-            }
-            payload = client.post(
-                "/api/identify",
-                data={"image": (io.BytesIO(b"JPEGDATA"), "capture.jpg")},
-                content_type="multipart/form-data",
-            ).get_json()
-            assert payload["source"] == "ai_vision", f"source={payload['source']}"
-            assert payload["ai_model"] == "gpt-4o-mini", "model not reported"
-            assert payload["display_name"] == "Crushed PET bottle", "item name not used"
-            assert payload["category"] == "Recyclable Waste", "category not used"
-            assert payload["points"] == 13, f"points={payload['points']}"
-            assert payload["confidence"] == 0.91, "confidence not surfaced"
-            assert len(payload["preparation_steps"]) == 3, "steps not surfaced"
-            assert payload["why"], "why not surfaced"
+    def bin_colour_mapping_matches_app() -> str:
+        # vision.py keeps its own category->colour map so the prompt and the
+        # validator can work without importing app.py; assert they agree.
+        for category, meta in app_module.BIN_META.items():
+            expected = vision.BIN_COLOR_BY_CATEGORY[category]
+            assert expected == meta["bin_color"], (
+                f"{category}: vision says {expected}, app says {meta['bin_color']}"
+            )
+        assert set(vision.BIN_COLOR_BY_CATEGORY) == set(app_module.BIN_META), (
+            "vision.py and app.py disagree on the five categories"
+        )
+        return "5 categories, identical bin colours in vision.py and app.py"
 
-            # The model may suggest points, but never outside the stream's range
-            # derived from the catalog.
-            vision.analyze_image = lambda *a, **k: {
-                "item": "Bottle",
-                "category": "Recyclable Waste",
-                "confidence": 0.5,
-                "steps": ["Rinse"],
-                "why": "",
-                "suggested_points": 99999,
-            }
-            clamped = client.post(
-                "/api/identify",
-                data={"image": (io.BytesIO(b"x"), "c.jpg")},
-                content_type="multipart/form-data",
-            ).get_json()
-            assert clamped["points"] == 15, f"clamped points={clamped['points']}"
-            return "ai_vision + clamp 99999 -> 15"
-        finally:
-            vision.analyze_image = original
-            os.environ.pop("ECOSORT_AI_API_KEY", None)
-
-    check("10. AI vision answer is mapped, clamped and labelled", ai_vision_path)
+    check("10. vision category->bin map matches the canonical domain", bin_colour_mapping_matches_app)
 
     # ---------------------------------------------------------------- 11
-    def ai_failure_degrades() -> str:
-        os.environ["ECOSORT_AI_API_KEY"] = "test-key-not-real"
-        original = vision.analyze_image
-        try:
-            def broken(*args, **kwargs):
-                raise vision.VisionError("vision API returned HTTP 401 unauthorized")
+    def gemini_wiring() -> str:
+        """Mock ONLY the SDK boundary and prove what actually reaches Gemini."""
+        os.environ["GEMINI_API_KEY"] = "test-key-not-real"
+        os.environ["GEMINI_MODEL"] = "gemini-2.5-flash"
+        captured: dict = {}
+        original_build = vision._build_client
 
-            vision.analyze_image = broken
+        class _Models:
+            def generate_content(self, **kwargs):
+                captured.update(kwargs)
+
+                class _Response:
+                    parsed = None
+                    text = (
+                        '{"item_name":"Crushed PET Water Bottle",'
+                        '"category":"Recyclable Waste","bin_color":"Blue",'
+                        '"confidence":"High",'
+                        '"instructions":"Empty and rinse the bottle. '
+                        'Remove the cap and keep it. Flatten it.",'
+                        '"analysis_mode":"ai_vision"}'
+                    )
+
+                return _Response()
+
+        class _Client:
+            models = _Models()
+
+        vision._build_client = lambda key: _Client()
+        try:
+            image = b"\xff\xd8\xff\xe0REAL-JPEG-BYTES"
+            payload = client.post(
+                "/api/identify",
+                data={"image": (io.BytesIO(image), "camera-capture.jpg")},
+                content_type="multipart/form-data",
+            ).get_json()
+
+            # 1. the API mapped the model answer
+            assert payload["analysis_mode"] == "ai_vision", payload["analysis_mode"]
+            assert payload["item_name"] == "Crushed PET Water Bottle", payload["item_name"]
+            assert payload["category"] == "Recyclable Waste", payload["category"]
+            assert payload["bin_color"] == "Blue", payload["bin_color"]
+            assert payload["confidence"] == "High", payload["confidence"]
+            assert payload["points"] == 15, f"server-derived points={payload['points']}"
+            assert len(payload["preparation_steps"]) == 3, payload["preparation_steps"]
+            assert payload["ai_model"] == "gemini-2.5-flash", payload["ai_model"]
+
+            # 2. the real image bytes reached the multimodal Part
+            contents = captured["contents"]
+            part, prompt = contents[0], contents[1]
+            assert part.inline_data is not None, "no Part.from_bytes payload"
+            assert bytes(part.inline_data.data) == image, "different bytes reached the model"
+            assert part.inline_data.mime_type == "image/jpeg", part.inline_data.mime_type
+
+            # 3. the response contract is enforced by the SDK schema
+            config = captured["config"]
+            assert config.response_mime_type == "application/json", config.response_mime_type
+            assert config.response_schema is vision.WasteAnalysis, "response_schema not sent"
+            assert isinstance(prompt, str) and "EcoSort" in prompt, "prompt not sent"
+
+            return (
+                f"bytes={len(part.inline_data.data)} mime=image/jpeg "
+                "schema=WasteAnalysis -> Recyclable/Blue/High, 15 pts, 3 steps"
+            )
+        finally:
+            vision._build_client = original_build
+            os.environ.pop("GEMINI_API_KEY", None)
+
+    check("11. real image bytes + strict schema reach the Gemini SDK", gemini_wiring)
+
+    # ---------------------------------------------------------------- 12
+    def gemini_failures_degrade() -> str:
+        os.environ["GEMINI_API_KEY"] = "test-key-not-real"
+        original_build = vision._build_client
+        try:
+            def boom(key):
+                raise RuntimeError("quota exceeded")
+
+            vision._build_client = boom
             response = client.post(
                 "/api/identify",
                 data={"image": (io.BytesIO(b"x"), "battery.jpg")},
@@ -454,46 +499,58 @@ def main() -> int:
             )
             payload = response.get_json()
             assert response.status_code == 200, f"status {response.status_code}"
-            assert payload["source"] == "offline_fallback", "did not fall back to rules"
-            assert payload["category"] == "Hazardous Waste", "fallback lost the filename signal"
-            assert "401" in (payload["vision_error"] or ""), "vision_error not surfaced"
+            assert payload["analysis_mode"] == "offline_fallback", "did not fall back"
+            assert payload["category"] == "Hazardous Waste", "filename signal lost"
+            assert payload["vision_error"], "vision_error not surfaced"
 
-            # A crash inside the analyser must not 500 the scan flow.
-            def crash(*args, **kwargs):
-                raise AttributeError("bug in analyser")
+            # A model answer with an out-of-domain category is rejected.
+            class _BadModels:
+                def generate_content(self, **kwargs):
+                    class _Response:
+                        parsed = None
+                        text = '{"item_name":"Mystery goo","category":"Compost",' \
+                               '"bin_color":"Green","confidence":"High",' \
+                               '"instructions":"Do something.","analysis_mode":"ai_vision"}'
 
-            vision.analyze_image = crash
-            crash_response = client.post(
-                "/api/identify",
-                data={"image": (io.BytesIO(b"x"), "box.jpg")},
-                content_type="multipart/form-data",
-            )
-            assert crash_response.status_code == 200, "analyser crash became a 500"
+                    return _Response()
 
-            # An unknown category from the model is rejected at the boundary.
-            vision.analyze_image = lambda *a, **k: {
-                "item": "Mystery",
-                "category": "Compost",
-                "confidence": 0.4,
-                "steps": ["Do something"],
-                "why": "",
-                "suggested_points": 10,
-            }
+            class _BadClient:
+                models = _BadModels()
+
+            vision._build_client = lambda key: _BadClient()
             unknown = client.post(
                 "/api/identify",
                 data={"image": (io.BytesIO(b"x"), "box.jpg")},
                 content_type="multipart/form-data",
             ).get_json()
-            assert unknown["source"] == "offline_fallback", "unknown category was trusted"
+            assert unknown["analysis_mode"] == "offline_fallback", "unknown category trusted"
             assert unknown["category"] == "Recyclable Waste", "fallback answer wrong"
-            return "401, analyser crash and unknown category all degrade to rules"
+            assert "unknown category" in (unknown["vision_error"] or ""), unknown["vision_error"]
+
+            # An SDK crash mid-call must not 500 the scan.
+            class _CrashModels:
+                def generate_content(self, **kwargs):
+                    raise AttributeError("bug in SDK call")
+
+            class _CrashClient:
+                models = _CrashModels()
+
+            vision._build_client = lambda key: _CrashClient()
+            crashed = client.post(
+                "/api/identify",
+                data={"image": (io.BytesIO(b"x"), "box.jpg")},
+                content_type="multipart/form-data",
+            )
+            assert crashed.status_code == 200, "SDK crash became a 500"
+            return "client-construction failure, unknown category and SDK crash all degrade"
         finally:
-            vision.analyze_image = original
-            os.environ.pop("ECOSORT_AI_API_KEY", None)
+            vision._build_client = original_build
+            os.environ.pop("GEMINI_API_KEY", None)
 
-    check("11. vision failures and bad answers fall back, never 500", ai_failure_degrades)
+    check("12. Gemini failures degrade to rules, never 500", gemini_failures_degrade)
 
-    # ---------------------------------------------------------------- 12
+    # ---------------------------------------------------------------- 13
+    # ---------------------------------------------------------------- 14
     def rate_limiting() -> str:
         os.environ["RATE_LIMIT_IDENTIFY_PER_MIN"] = "2"
         rate_limit.reset_rate_limits()
@@ -541,9 +598,9 @@ def main() -> int:
             os.environ["RATE_LIMIT_IDENTIFY_PER_MIN"] = "1000"
             rate_limit.reset_rate_limits()
 
-    check("12. rate limiting: 429 + Retry-After + reset + kill switch", rate_limiting)
+    check("14. rate limiting: 429 + Retry-After + reset + kill switch", rate_limiting)
 
-    # ---------------------------------------------------------------- 13
+    # ---------------------------------------------------------------- 15
     def legacy_database_migration() -> str:
         legacy = Path(tempfile.mkdtemp(prefix="ecosort-legacy-")) / "database.db"
         connection = sqlite3.connect(legacy)
@@ -612,7 +669,7 @@ def main() -> int:
             app_module._bootstrapped = previous_flag
             rate_limit.reset_rate_limits()
 
-    check("13. campus-era database upgrades in place", legacy_database_migration)
+    check("15. campus-era database upgrades in place", legacy_database_migration)
 
     # ---------------------------------------------------------------- summary
     print(f"\n{len(PASSED)} passed, {len(FAILED)} failed")

@@ -26,8 +26,8 @@ Two leaderboards are shown: **Top Eco Contributors** (every user, by points) and
 
 ```bash
 cd ecosort
-python -m pip install -r requirements.txt      # Flask + Werkzeug only
-python app.py                                   # -> http://127.0.0.1:5000
+python -m pip install -r requirements.txt   # Flask, Werkzeug, google-genai
+python app.py                                # -> http://127.0.0.1:5000
 ```
 
 Open **http://127.0.0.1:5000** and:
@@ -57,60 +57,75 @@ The client starts in **local mode** (no backend needed) — switch to the Flask
 backend with the ⚙️ icon in the app bar. If a call fails it falls back to local
 mode and says so.
 
-## 2. AI vision (optional) and offline mode
+## 2. AI vision with Google Gemini (optional) and offline mode
 
-`POST /api/identify` prefers a vision model and always has a deterministic
-fallback. **No key = no behaviour change**: the rule engine answers and the UI
-labels the result `Offline rules`.
+`POST /api/identify` sends the **actual image bytes** to Gemini through the
+`google-genai` SDK (`client.models.generate_content` +
+`types.Part.from_bytes`) and asks for a strict JSON answer via
+`response_mime_type="application/json"` and a Pydantic `response_schema`.
 
 ```bash
 cp .env.example .env
-# then edit .env and set ECOSORT_AI_API_KEY=sk-...
+# edit .env, or simply export in your shell:
+export GEMINI_API_KEY="your-key-from-aistudio.google.com/apikey"
 python app.py
 ```
 
-`.env` is parsed by a small stdlib loader in `app.py` (no `python-dotenv`), and
-real environment variables always override the file. Any OpenAI-compatible
-`/chat/completions` endpoint works:
+Get a key at <https://aistudio.google.com/apikey>. `.env` is parsed by a small
+stdlib loader in `app.py` (no `python-dotenv`), and real environment variables
+always override the file.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `ECOSORT_AI_API_KEY` | *(empty — vision off)* | API key, env only |
-| `ECOSORT_AI_ENABLED` | `1` | `0` disables vision even with a key |
-| `ECOSORT_AI_BASE_URL` | `https://api.openai.com/v1` | any compatible endpoint |
-| `ECOSORT_AI_MODEL` | `gpt-4o-mini` | vision-capable model |
-| `ECOSORT_AI_TIMEOUT_SECONDS` | `10` | hard timeout per call |
+| `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | *(unset — vision off)* | API key, env only |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | any vision-capable Gemini model |
+| `GEMINI_TIMEOUT_SECONDS` | `20` | hard per-request timeout |
 
-What the model returns is validated, never trusted blindly:
+**No key means no fake labels.** Without a key the app never contacts Google,
+never constructs a client, and answers from the deterministic classifier with
+`analysis_mode: "offline_fallback"` and `confidence: null`.
 
-- category must be one of the five literal streams, otherwise the answer is
-  rejected and rules answer instead;
-- `points` suggested by the model are clamped to the catalog's range for that
-  stream (Wet 10 · Recyclable 10–15 · Dry 10 · E-Waste 20–25 · Hazardous 25);
-- preparation steps must be non-empty.
+The model is asked for exactly this schema:
 
-Every identify response says where it came from:
+| Field | Example |
+| --- | --- |
+| `item_name` | `Crushed PET Water Bottle` |
+| `category` | one of the five literals |
+| `bin_color` | `Green` / `Blue` / `Gray` / `Purple` / `Red` |
+| `confidence` | `High` / `Medium` / `Low` |
+| `instructions` | concrete preparation steps for that item |
+| `analysis_mode` | `ai_vision` |
+
+`app.py` maps that onto the API contract and still owns the scoring:
 
 ```json
 {
-  "display_name": "Crushed PET bottle",
+  "item_name": "Crushed PET Water Bottle",
+  "display_name": "Crushed PET Water Bottle",
   "category": "Recyclable Waste",
   "bin_color": "Blue",
-  "points": 13,
+  "confidence": "High",
+  "instructions": "Empty and rinse the bottle. Remove the cap. Flatten it.",
+  "preparation_steps": ["Empty and rinse the bottle.", "Remove the cap.", "Flatten it."],
+  "points": 15,
+  "analysis_mode": "ai_vision",
   "source": "ai_vision",
-  "confidence": 0.91,
-  "preparation_steps": ["Empty and rinse", "Remove the cap", "Flatten it"],
-  "why": "PET is a high-value rigid plastic.",
-  "ai_model": "gpt-4o-mini",
+  "ai_model": "gemini-2.5-flash",
+  "vision_provider": "google-genai",
   "vision_error": null,
+  "local_note": "Rules vary by municipality — check your local waste collection guidance...",
   "fallback": false
 }
 ```
 
-On timeout, HTTP error, rate limit, unparseable JSON or unknown category the
-same shape comes back with `"source": "rules"` and a human-readable
-`vision_error` — never a 500. `GET /api/capabilities` reports whether AI is on
-without exposing the key.
+- `points` are **derived server-side** from the category's catalog range; the
+  model cannot mint them, and `/api/dispose` re-derives again.
+- A category outside the five literals, a contradictory bin colour, empty
+  instructions or a malformed reply is rejected — the span falls back to rules.
+- `source` is kept as an alias of `analysis_mode` for older clients.
+- `vision_error` explains any fallback (missing key, timeout, quota, schema
+  mismatch). `GET /api/capabilities` reports `enabled`, `provider`, `model`,
+  `schema` and `sdk_installed` without exposing the key.
 
 ## 3. Rate limiting
 
@@ -139,7 +154,7 @@ limit. That is the deliberate trade-off for shipping without Redis.
 | `GET /` | the server-rendered app |
 | `GET /api/capabilities` | AI/limit/category config, secret-free |
 | `POST /api/user` | create/rehydrate a profile |
-| `POST /api/identify` | classify a camera frame, upload or preset keyword |
+| `POST /api/identify` | Gemini vision on the uploaded image, or the deterministic fallback |
 | `POST /api/dispose` | log a disposal; points re-derived server-side, `client_token` idempotency |
 | `POST /api/challenge/complete` | claim one challenge day, +15 exactly once |
 | `GET /api/leaderboard` | top 10 contributors + group/community totals |
@@ -178,7 +193,9 @@ node camera.mjs                   # live camera, fallbacks, 429, 12 checks
 
 `tests/e2e/*.mjs` use `playwright-core` against the **installed** Chrome, so no
 browser is downloaded and nothing is added to the app. `camera.mjs` uses
-Chrome's fake capture device, so it works without a webcam.
+Chrome's fake capture device, so it works without a webcam. The Gemini call is
+mocked at the SDK boundary in `tests/verify_api.py`, so no network or billing
+is needed in CI.
 `.github/workflows/ci.yml` runs the API suite plus `flutter analyze` and
 `flutter test` on every PR.
 
