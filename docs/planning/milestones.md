@@ -8,10 +8,10 @@ lives in `docs/planning/issues/`, written to be filed verbatim.
 | # | Window | Focus | Gate | State |
 | --- | --- | --- | --- | --- |
 | M1 | 0–30 min | scaffold, SQLite bootstrap, 3-tab shell | `GET /` = 200; idempotent seed counts | **done** (`feat/m1-scaffold-bootstrap`) |
-| M2 | 30–75 min | profiles + deterministic classifier | preset/upload/fallback classification < 300 ms | [issue draft](issues/m2-waste-identification.md) |
-| M3 | 75–115 min | disposal guide, virtual bins | log row + score + bin count persist across reload | [issue draft](issues/m3-disposal-and-bins.md) |
-| M4 | 115–145 min | badges, 7-day challenge, leaderboards | badge unlock, +15 once, campus totals | [issue draft](issues/m4-badges-challenge-leaderboards.md) |
-| M5 | 145–180 min | automated tests, 375 px polish, demo | 100 % assertions pass, no horizontal overflow | [issue draft](issues/m5-verification-and-polish.md) |
+| M2 | 30–75 min | profiles + deterministic classifier | preset/upload/fallback classification < 300 ms | **done** (PR #6) |
+| M3 | 75–115 min | disposal guide, virtual bins | log row + score + bin count persist across reload | **done** (PR #9) |
+| M4 | 115–145 min | badges, 7-day challenge, leaderboards | badge unlock, +15 once, campus totals | **done** (PR #9) |
+| M5 | 145–180 min | automated tests, 375 px polish, demo | 100 % assertions pass, no horizontal overflow | **done** (PR #9) |
 
 ## Not yet filed on GitHub
 
