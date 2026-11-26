@@ -1,43 +1,51 @@
-"""Optional AI vision analysis for EcoSort.
+"""AI vision analysis for EcoSort, backed by Google Gemini.
 
-Design rules:
+Contract with the rest of the app:
 
-* **Never required.** No key configured means no import-time work, no network
-  call, and the deterministic classifier answers instead. The app must behave
-  identically offline.
-* **No new dependency.** The call is a plain JSON POST over ``urllib`` to an
-  OpenAI-compatible ``/chat/completions`` endpoint, so ``requirements.txt`` stays
-  at Flask + Werkzeug and the offline test suite cannot break.
-* **Bounded.** Every failure mode (timeout, HTTP error, unparseable body,
-  category outside the five streams) raises :class:`VisionError`; the caller
-  falls back to rules and reports why.
-* **Keys from the environment only.** Nothing is ever written to disk or logged.
+* **Optional.** No ``GEMINI_API_KEY`` means no SDK client, no network call and no
+  import-time work; :func:`enabled` is false and the caller uses the
+  deterministic classifier with ``analysis_mode="offline_fallback"``.
+* **Structured, not parsed by hand.** The SDK is asked for
+  ``response_mime_type="application/json"`` with a Pydantic ``response_schema``,
+  so the reply is validated by the library before we ever see it.
+* **Bounded and honest.** Every failure (timeout, HTTP error, refusal, schema
+  mismatch, category outside the five streams) raises :class:`VisionError`. The
+  caller falls back to rules and reports why. Nothing is guessed or invented when
+  vision is unavailable.
+* **Keys from the environment only.** ``GEMINI_API_KEY`` (or the SDK's own
+  ``GOOGLE_API_KEY``) is read per call; it is never logged, stored or returned.
 
 Environment variables:
 
-===========================  ==========================================
-ECOSORT_AI_API_KEY           API key; without it vision is disabled
-ECOSORT_AI_BASE_URL          default ``https://api.openai.com/v1``
-ECOSORT_AI_MODEL             default ``gpt-4o-mini``
-ECOSORT_AI_TIMEOUT_SECONDS   default ``10``
-===========================  ==========================================
+======================  =====================================================
+GEMINI_API_KEY          API key. Unset => offline fallback (no fake AI labels)
+GEMINI_MODEL            default ``gemini-2.5-flash``
+GEMINI_TIMEOUT_SECONDS  default ``20``
+======================  =====================================================
 """
 
 from __future__ import annotations
 
-import base64
-import json
 import os
-import re
-import urllib.error
-import urllib.request
+from typing import Any
 
-DEFAULT_BASE_URL = "https://api.openai.com/v1"
-DEFAULT_MODEL = "gpt-4o-mini"
-DEFAULT_TIMEOUT_SECONDS = 10.0
+try:  # The SDK is optional at runtime: the app must import without it.
+    from google import genai
+    from google.genai import types
+    from pydantic import BaseModel, Field
 
-# The only categories the model may answer with. Anything else is a model error,
-# not a new stream.
+    GENAI_AVAILABLE = True
+except ImportError:  # pragma: no cover - exercised only without the dependency
+    genai = None  # type: ignore[assignment]
+    types = None  # type: ignore[assignment]
+    BaseModel = object  # type: ignore[assignment,misc]
+    Field = None  # type: ignore[assignment]
+    GENAI_AVAILABLE = False
+
+DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_TIMEOUT_SECONDS = 20.0
+MAX_IMAGE_BYTES = 6 * 1024 * 1024
+
 ALLOWED_CATEGORIES: tuple[str, ...] = (
     "Wet Waste",
     "Recyclable Waste",
@@ -46,57 +54,93 @@ ALLOWED_CATEGORIES: tuple[str, ...] = (
     "Hazardous Waste",
 )
 
-MAX_IMAGE_BYTES = 6 * 1024 * 1024
-
-_SYSTEM_PROMPT = """You are EcoSort's waste-sorting analyst for an Indian campus.
-Identify the single dominant waste item in the image and classify it into exactly
-one of these categories (copy the literal string):
-- "Wet Waste"        (food scraps, peels, compostable)
-- "Recyclable Waste" (clean plastic bottles, rigid plastic, cardboard, paper)
-- "Dry Waste"        (multi-layer wrappers, soiled tissue, non-recyclable)
-- "E-Waste"          (chargers, cables, phones, small electronics)
-- "Hazardous Waste"  (batteries, expired medicine, chemicals, sharps)
-
-Reply with JSON only, no markdown, no prose outside the object:
-{
-  "item": "short human name of the item",
-  "category": "<one of the five literals>",
-  "confidence": 0.0-1.0,
-  "is_single_item": true/false,
-  "steps": ["specific preparation step", "..."],
-  "why": "one sentence on why it belongs to that stream",
-  "suggested_points": integer
+# Canonical category -> bin colour. `verify_api.py` asserts this matches
+# app.BIN_META so the two cannot drift.
+BIN_COLOR_BY_CATEGORY: dict[str, str] = {
+    "Wet Waste": "Green",
+    "Recyclable Waste": "Blue",
+    "Dry Waste": "Gray",
+    "E-Waste": "Purple",
+    "Hazardous Waste": "Red",
 }
 
-Rules for the content:
-- steps must be concrete and safe: rinse food or liquid, remove caps/lids/tape,
-  flatten cardboard, tape battery terminals, hand e-waste to a drop-off, or say
-  plainly why the item is not recyclable.
-- never suggest putting a battery, medicine or chemical in a general bin.
-- if the image shows no waste item or is unreadable, set confidence below 0.3
-  and category "Dry Waste".
-- suggested_points must sit inside the stream's usual range (Wet 10, Recyclable
-  10-15, Dry 10, E-Waste 20-25, Hazardous 25)."""
+CONFIDENCE_LEVELS: tuple[str, ...] = ("High", "Medium", "Low")
+
+if GENAI_AVAILABLE:
+
+    class WasteAnalysis(BaseModel):
+        """Strict response schema handed to Gemini."""
+
+        item_name: str = Field(
+            description="Short name of the primary waste object visible in the photo."
+        )
+        category: str = Field(
+            description=(
+                'Exactly one of: "Wet Waste", "Recyclable Waste", "Dry Waste", '
+                '"E-Waste", "Hazardous Waste".'
+            )
+        )
+        bin_color: str = Field(
+            description='Bin colour for that category: "Green", "Blue", "Gray", '
+            '"Purple" or "Red".'
+        )
+        confidence: str = Field(
+            description='How sure you are: "High", "Medium" or "Low".'
+        )
+        instructions: str = Field(
+            description=(
+                "Concrete preparation steps for this exact item: empty/rinse, "
+                "remove cap or label, flatten, tape battery terminals, e-waste or "
+                "hazardous drop-off. One step per sentence."
+            )
+        )
+        analysis_mode: str = Field(
+            description='Always "ai_vision" - the answer comes from the image.'
+        )
+
+else:  # pragma: no cover
+    WasteAnalysis = None  # type: ignore[assignment]
+
+_PROMPT = """You are EcoSort's waste analyst. Inspect the attached photograph and
+identify the primary waste item actually visible in it.
+
+Rules:
+- Describe what you see, not what a filename might suggest.
+- Choose exactly one category: "Wet Waste" (food scraps, peels, compostable),
+  "Recyclable Waste" (clean rigid plastic, bottles, cardboard, paper), "Dry Waste"
+  (multi-layer wrappers, soiled tissue, non-recyclable), "E-Waste" (chargers,
+  cables, phones, small electronics), "Hazardous Waste" (batteries, expired
+  medicine, chemicals, sharps).
+- bin_color must be Green for Wet, Blue for Recyclable, Gray for Dry, Purple for
+  E-Waste, Red for Hazardous.
+- instructions must be specific to this item and safe: rinse or empty food and
+  liquid, remove caps/lids/tape, flatten cardboard, tape battery terminals, hand
+  e-waste and hazardous items to a drop-off. Never suggest a general bin for a
+  battery, medicine or chemical.
+- If the photo shows no waste item, or is too blurry to judge, use category
+  "Dry Waste" and confidence "Low".
+- analysis_mode is always "ai_vision".
+Answer with JSON only, matching the provided schema."""
 
 
 class VisionError(Exception):
-    """Any reason the AI answer is unavailable. Callers fall back to rules."""
+    """Any reason the vision answer is unavailable. Callers fall back to rules."""
 
 
 def api_key() -> str:
-    return (os.environ.get("ECOSORT_AI_API_KEY") or "").strip()
+    return (
+        os.environ.get("GEMINI_API_KEY")
+        or os.environ.get("GOOGLE_API_KEY")
+        or ""
+    ).strip()
 
 
-def base_url() -> str:
-    return (os.environ.get("ECOSORT_AI_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
-
-
-def model() -> str:
-    return (os.environ.get("ECOSORT_AI_MODEL") or DEFAULT_MODEL).strip()
+def model_name() -> str:
+    return (os.environ.get("GEMINI_MODEL") or DEFAULT_MODEL).strip()
 
 
 def timeout_seconds() -> float:
-    raw = os.environ.get("ECOSORT_AI_TIMEOUT_SECONDS")
+    raw = os.environ.get("GEMINI_TIMEOUT_SECONDS")
     try:
         return float(raw) if raw else DEFAULT_TIMEOUT_SECONDS
     except ValueError:
@@ -104,98 +148,123 @@ def timeout_seconds() -> float:
 
 
 def enabled() -> bool:
-    """Vision is available only when a key is configured and the toggle is on."""
-    if (os.environ.get("ECOSORT_AI_ENABLED") or "1").strip().lower() in {"0", "false", "no"}:
+    """True only when the SDK is importable *and* a key is configured."""
+    if not GENAI_AVAILABLE:
         return False
     return bool(api_key())
 
 
 def status() -> dict:
-    """Small, secret-free description for ``GET /api/capabilities`` and the UI."""
+    """Secret-free description for ``GET /api/capabilities``."""
     return {
         "enabled": enabled(),
-        "model": model() if enabled() else None,
-        "base_url": base_url() if enabled() else None,
+        "provider": "google-genai" if GENAI_AVAILABLE else None,
+        "model": model_name() if enabled() else None,
+        "schema": "WasteAnalysis",
         "timeout_seconds": timeout_seconds(),
+        "sdk_installed": GENAI_AVAILABLE,
     }
 
 
-def _extract_json(text: str) -> dict:
-    """Pull a JSON object out of a model reply that may be wrapped in prose."""
-    text = (text or "").strip()
+# --- SDK boundary -------------------------------------------------------
+# Kept as module-level functions so tests can monkeypatch exactly one seam and
+# still exercise the real argument wiring in `analyze_image`.
+
+
+def _build_client(key: str) -> Any:
+    """Create the Gemini client. Patched by tests; never called without a key."""
+    http_options = None
+    if types is not None and hasattr(types, "HttpOptions"):
+        http_options = types.HttpOptions(timeout=int(timeout_seconds() * 1000))
+    if http_options is not None:
+        return genai.Client(api_key=key, http_options=http_options)
+    return genai.Client(api_key=key)
+
+
+def _generate(
+    client: Any,
+    image_bytes: bytes,
+    mime_type: str,
+) -> Any:
+    """One multimodal call. Separate so a test can assert the exact wiring."""
+    return client.models.generate_content(
+        model=model_name(),
+        contents=[
+            types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+            _PROMPT,
+        ],
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=WasteAnalysis,
+            temperature=0,
+        ),
+    )
+
+
+def _coerce_payload(response: Any) -> dict:
+    """Read the structured answer, preferring the SDK-parsed object."""
+    parsed = getattr(response, "parsed", None)
+    if isinstance(parsed, dict):
+        return parsed
+    if parsed is not None and hasattr(parsed, "model_dump"):
+        return parsed.model_dump()
+
+    text = getattr(response, "text", None)
     if not text:
-        raise VisionError("model returned an empty message")
-    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S)
-    candidate = fenced.group(1) if fenced else text
+        raise VisionError("vision model returned no parsable content")
+    import json
+
     try:
-        parsed = json.loads(candidate)
-    except json.JSONDecodeError:
-        start, end = candidate.find("{"), candidate.rfind("}")
-        if start == -1 or end <= start:
-            raise VisionError("model reply contained no JSON object") from None
-        try:
-            parsed = json.loads(candidate[start : end + 1])
-        except json.JSONDecodeError as error:
-            raise VisionError(f"model reply was not valid JSON ({error})") from None
-    if not isinstance(parsed, dict):
-        raise VisionError("model reply JSON was not an object")
-    return parsed
+        return json.loads(text)
+    except json.JSONDecodeError as error:
+        raise VisionError(f"vision reply was not valid JSON ({error})") from None
 
 
 def _validate(payload: dict) -> dict:
+    """Reject anything outside the domain contract."""
+    if not isinstance(payload, dict):
+        raise VisionError("vision reply was not a JSON object")
+
+    item_name = str(payload.get("item_name") or "").strip()
+    if not item_name:
+        raise VisionError("vision reply had no item_name")
+
     category = str(payload.get("category") or "").strip()
     if category not in ALLOWED_CATEGORIES:
-        raise VisionError(f"model returned an unknown category: {category!r}")
+        raise VisionError(f"vision returned an unknown category: {category!r}")
 
-    item = str(payload.get("item") or "").strip() or "Unidentified item"
+    bin_color = str(payload.get("bin_color") or "").strip()
+    expected_color = BIN_COLOR_BY_CATEGORY[category]
+    if bin_color != expected_color:
+        # Trust the category, not a contradictory colour.
+        bin_color = expected_color
 
-    try:
-        confidence = float(payload.get("confidence"))
-    except (TypeError, ValueError):
-        confidence = 0.0
-    confidence = max(0.0, min(1.0, confidence))
+    confidence = str(payload.get("confidence") or "").strip().title()
+    if confidence not in CONFIDENCE_LEVELS:
+        confidence = "Low"
 
-    steps_raw = payload.get("steps")
-    if isinstance(steps_raw, str):
-        steps = [steps_raw]
-    elif isinstance(steps_raw, list):
-        steps = [str(step).strip() for step in steps_raw if str(step).strip()]
-    else:
-        steps = []
-    if not steps:
-        raise VisionError("model returned no preparation steps")
-
-    why = str(payload.get("why") or "").strip()
-
-    try:
-        suggested_points = int(payload.get("suggested_points"))
-    except (TypeError, ValueError):
-        suggested_points = 0
+    instructions = str(payload.get("instructions") or "").strip()
+    if not instructions:
+        raise VisionError("vision reply had no instructions")
 
     return {
-        "item": item,
+        "item_name": item_name,
         "category": category,
-        "confidence": round(confidence, 2),
-        "steps": steps[:6],
-        "why": why,
-        "suggested_points": suggested_points,
+        "bin_color": bin_color,
+        "confidence": confidence,
+        "instructions": instructions,
+        "analysis_mode": "ai_vision",
     }
 
 
-def analyze_image(
-    image_bytes: bytes,
-    media_type: str = "image/jpeg",
-    *,
-    timeout: float | None = None,
-) -> dict:
-    """Ask the vision model about one image.
+def analyze_image(image_bytes: bytes, mime_type: str = "image/jpeg") -> dict:
+    """Analyse real image bytes and return the validated schema.
 
-    Returns a validated dict, or raises :class:`VisionError`. Never returns a
-    partially-filled result, so callers can treat "no exception" as "trustworthy
-    structured answer".
+    Raises :class:`VisionError` on every failure path; returning normally means
+    the answer came from the model and passed validation.
     """
     if not enabled():
-        raise VisionError("AI vision is not configured")
+        raise VisionError("GEMINI_API_KEY is not configured")
     if not image_bytes:
         raise VisionError("no image bytes to analyse")
     if len(image_bytes) > MAX_IMAGE_BYTES:
@@ -204,67 +273,15 @@ def analyze_image(
             f"{MAX_IMAGE_BYTES // (1024 * 1024)} MB vision limit"
         )
 
-    encoded = base64.b64encode(image_bytes).decode("ascii")
-    body = {
-        "model": model(),
-        "temperature": 0,
-        "max_tokens": 512,
-        "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "Identify this waste item and return the JSON object.",
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:{media_type};base64,{encoded}"},
-                    },
-                ],
-            },
-        ],
-    }
-
-    request = urllib.request.Request(
-        f"{base_url()}/chat/completions",
-        data=json.dumps(body).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key()}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-        method="POST",
-    )
+    key = api_key()
+    try:
+        client = _build_client(key)
+    except Exception as error:  # noqa: BLE001 - SDK construction can raise anything
+        raise VisionError(f"could not create the vision client ({error})") from None
 
     try:
-        with urllib.request.urlopen(
-            request, timeout=timeout or timeout_seconds()
-        ) as response:
-            raw = response.read()
-    except urllib.error.HTTPError as error:
-        detail = ""
-        try:
-            detail = error.read().decode("utf-8", "replace")[:200]
-        except Exception:  # noqa: BLE001 - diagnostics only
-            detail = ""
-        raise VisionError(f"vision API returned HTTP {error.code} {detail}".strip()) from None
-    except urllib.error.URLError as error:
-        raise VisionError(f"vision API unreachable ({error.reason})") from None
-    except TimeoutError:
-        raise VisionError("vision API timed out") from None
-    except OSError as error:
-        raise VisionError(f"vision API request failed ({error})") from None
+        response = _generate(client, image_bytes, mime_type)
+    except Exception as error:  # noqa: BLE001 - network/timeouts/quota all land here
+        raise VisionError(f"vision request failed ({type(error).__name__}: {error})") from None
 
-    try:
-        envelope = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        raise VisionError("vision API returned a non-JSON envelope") from None
-
-    try:
-        content = envelope["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError):
-        raise VisionError("vision API envelope had no message content") from None
-
-    return _validate(_extract_json(content if isinstance(content, str) else str(content)))
+    return _validate(_coerce_payload(response))

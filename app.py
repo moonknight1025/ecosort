@@ -687,11 +687,16 @@ def analyze_waste(
     result = dict(classify_waste(keyword_text, image_path, connection=connection))
     result.update(
         {
+            # `source` is kept as an alias of `analysis_mode` so older clients
+            # keep working; `analysis_mode` is the documented field.
+            "analysis_mode": "offline_fallback",
             "source": "offline_fallback",
+            "item_name": result["display_name"],
             "confidence": None,
             "preparation_steps": [],
             "why": "",
             "ai_model": None,
+            "vision_provider": None,
             "vision_available": vision.enabled(),
             "vision_error": None,
         }
@@ -716,32 +721,44 @@ def analyze_waste(
         result["vision_error"] = f"vision analysis failed ({type(error).__name__})"
         return result
 
-    # Defence in depth: the analyser validates its own output, but this
-    # boundary must not trust a callee to have done so. An unknown category
-    # here would be a KeyError -> HTTP 500 on a user's scan.
+    # Defence in depth: vision.py validates the model reply against its
+    # response_schema, but this boundary must not trust a callee to have done so.
+    # An unknown category here would be a KeyError -> HTTP 500 on a user's scan.
     category = analysis.get("category")
-    steps = analysis.get("steps") or []
-    if category not in BIN_META or not steps:
+    item_name = str(analysis.get("item_name") or "").strip()
+    instructions = str(analysis.get("instructions") or "").strip()
+    if category not in BIN_META or not item_name or not instructions:
         result["vision_error"] = (
-            f"vision returned an unusable result (category={category!r}, "
-            f"steps={len(steps)})"
+            "vision returned an unusable result "
+            f"(category={category!r}, item_name={bool(item_name)}, "
+            f"instructions={bool(instructions)})"
         )
         return result
 
+    # The UI shows steps as a list; the model answers one step per sentence.
+    steps = [
+        step.strip(" -\t")
+        for step in re.split(r"(?<=[.!?])\s+|\n+", instructions)
+        if step.strip(" -\t")
+    ][:6]
+
     result.update(
         {
-            "display_name": analysis["item"],
+            "display_name": item_name,
+            "item_name": item_name,
             "category": category,
             "bin_color": BIN_META[category]["bin_color"],
-            "instructions": " ".join(steps),
-            "points": clamp_points(category, analysis["suggested_points"]),
+            "instructions": instructions,
+            "points": clamp_points(category, None),
             "matched_keyword": None,
             "fallback": False,
+            "analysis_mode": "ai_vision",
             "source": "ai_vision",
-            "confidence": analysis["confidence"],
+            "confidence": analysis.get("confidence") or "Low",
             "preparation_steps": steps,
-            "why": analysis["why"],
-            "ai_model": vision.model(),
+            "why": analysis.get("why") or "",
+            "ai_model": vision.model_name(),
+            "vision_provider": "google-genai",
         }
     )
     return result

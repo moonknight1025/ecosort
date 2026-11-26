@@ -232,8 +232,15 @@ not**.
 
 ### AI vision (`vision.py`, `analyze_waste()` in `app.py`)
 
-- No key means no network call and no import-time work. `vision.enabled()` is
-  evaluated per request, so `RATE_LIMIT_*`/`ECOSORT_AI_*` changes apply live.
+- Provider: **Google Gemini** via `google-genai`. Image bytes go to
+  `types.Part.from_bytes(data=..., mime_type=...)`; the reply is constrained by
+  `response_mime_type="application/json"` plus the Pydantic `WasteAnalysis`
+  `response_schema`, so parsing is deterministic rather than regex-on-prose.
+- Tests mock exactly one seam, `vision._build_client`, and assert the bytes,
+  mime type, model, prompt and schema that reach the SDK. Never call the real
+  API in tests; never add a test-only branch to production code.
+- `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) unset means no client, no network call
+  and no import-time work. `vision.enabled()` is evaluated per request.
 - The model answer is **untrusted input**: `vision._validate()` checks it, and
   `analyze_waste()` re-checks category + steps at the boundary. An unknown
   category is a rejected answer, not a new stream.

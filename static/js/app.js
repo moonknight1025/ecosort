@@ -226,12 +226,15 @@ function renderResult(result) {
     el.resultCard.style.setProperty('--bin', meta.hex);
   }
 
+  // `item_name` is the documented field; `display_name` is the older alias the
+  // rules engine still emits.
+  const itemName = result.item_name || result.display_name || 'Unknown item';
   el.resultCategory.textContent = result.category;
   el.resultPoints.textContent = `+${result.points} pts`;
-  el.resultName.textContent = result.display_name;
+  el.resultName.textContent = itemName;
   el.resultInstructions.textContent = result.instructions;
 
-  const fromAi = result.source === 'ai_vision';
+  const fromAi = (result.analysis_mode || result.source) === 'ai_vision';
   el.resultSource.hidden = false;
   el.resultSource.dataset.source = fromAi ? 'ai_vision' : 'offline_fallback';
   el.resultSource.textContent = fromAi
@@ -241,10 +244,18 @@ function renderResult(result) {
   const steps = Array.isArray(result.preparation_steps) ? result.preparation_steps : [];
   if (steps.length > 0) {
     el.resultAnalysis.hidden = false;
-    el.resultConfidence.textContent =
-      typeof result.confidence === 'number'
-        ? `Confidence ${Math.round(result.confidence * 100)}%`
-        : 'Model confidence unavailable';
+    // Gemini answers with a band ("High"); an older server may send 0..1.
+    if (typeof result.confidence === 'string' && result.confidence) {
+      const score =
+        typeof result.confidence_score === 'number'
+          ? ` (${Math.round(result.confidence_score * 100)}%)`
+          : '';
+      el.resultConfidence.textContent = `Confidence: ${result.confidence}${score}`;
+    } else if (typeof result.confidence === 'number') {
+      el.resultConfidence.textContent = `Confidence: ${Math.round(result.confidence * 100)}%`;
+    } else {
+      el.resultConfidence.textContent = 'Model confidence unavailable';
+    }
     el.resultSteps.innerHTML = steps.map((step) => `<li>${escapeHtml(step)}</li>`).join('');
     el.resultWhy.textContent = result.why || '';
     el.resultWhy.hidden = !result.why;
@@ -606,11 +617,13 @@ async function identifyRequest(buildForm, label) {
   try {
     const result = await postForm('/api/identify', buildForm());
     renderResult(result);
-    const provenance = result.source === 'ai_vision' ? 'AI vision' : 'offline rules';
+    const fromAi = (result.analysis_mode || result.source) === 'ai_vision';
+    const provenance = fromAi ? 'AI vision' : 'offline rules';
+    const itemName = result.item_name || result.display_name;
     toast(
       result.fallback
         ? `${label}: no catalog match, sorted as ${result.category} (${provenance}).`
-        : `${label}: ${result.category} · +${result.points} pts (${provenance})`,
+        : `${itemName}: ${result.category} · +${result.points} pts (${provenance})`,
     );
   } catch (error) {
     if (error instanceof HttpError && error.status === 429) {

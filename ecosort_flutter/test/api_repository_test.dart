@@ -14,31 +14,53 @@ import 'package:http/testing.dart';
 void main() {
   final Uri baseUrl = Uri.parse('http://127.0.0.1:5000');
 
-  test('parses an AI vision response including steps and confidence', () {
+  test('parses a Gemini vision response: item, category, band, instructions',
+      () {
     final WasteClassification result = WasteClassification.fromApiJson(
       <String, dynamic>{
-        'display_name': 'Crushed PET bottle',
+        'item_name': 'Crushed PET Water Bottle',
         'category': 'Recyclable Waste',
-        'instructions': 'Rinse and flatten',
+        'bin_color': 'Blue',
+        'confidence': 'High',
+        'instructions':
+            'Empty and rinse the bottle. Remove the cap. Flatten it.',
+        'analysis_mode': 'ai_vision',
+        'display_name': 'Crushed PET Water Bottle',
+        'source': 'ai_vision',
         'points': 15,
         'fallback': false,
-        'matched_keyword': null,
-        'source': 'ai_vision',
-        'confidence': 0.91,
         'preparation_steps': <String>['Empty and rinse', 'Remove the cap'],
-        'why': 'PET is a high-value rigid plastic.',
-        'ai_model': 'gpt-4o-mini',
+        'ai_model': 'gemini-2.5-flash',
         'vision_error': null,
       },
     );
 
     expect(result.source, ClassificationSource.aiVision);
     expect(result.source.label, 'AI Vision');
+    expect(result.displayName, 'Crushed PET Water Bottle');
     expect(result.category, WasteCategory.recyclable);
-    expect(result.confidence, 0.91);
-    expect(result.confidenceLabel, 'Confidence 91%');
+    expect(result.confidence, 'High');
+    expect(result.confidenceLabel, 'Confidence: High');
     expect(result.preparationSteps.length, 2);
     expect(result.points, 15);
+    expect(result.aiModel, 'gemini-2.5-flash');
+  });
+
+  test('accepts a numeric confidence from an older server', () {
+    WasteClassification parse(num score) => WasteClassification.fromApiJson(
+          <String, dynamic>{
+            'item_name': 'Battery',
+            'category': 'Hazardous Waste',
+            'confidence': score,
+            'analysis_mode': 'ai_vision',
+            'instructions': 'Tape the terminals.',
+          },
+        );
+
+    expect(parse(0.91).confidence, 'High');
+    expect(parse(0.91).confidenceScore, 0.91);
+    expect(parse(0.6).confidence, 'Medium');
+    expect(parse(0.2).confidence, 'Low');
   });
 
   test('parses a rules fallback and keeps the reason', () {
@@ -49,7 +71,7 @@ void main() {
         'instructions': 'Use the gray bin',
         'points': 10,
         'fallback': true,
-        'source': 'rules',
+        'analysis_mode': 'offline_fallback',
         'confidence': null,
         'preparation_steps': <String>[],
         'vision_error': 'no image supplied; filename and preset rules used',
@@ -69,15 +91,15 @@ void main() {
       captured = request;
       return http.Response(
         jsonEncode(<String, dynamic>{
-          'display_name': 'Used Battery',
+          'item_name': 'AA Alkaline Battery',
           'category': 'Hazardous Waste',
-          'instructions': 'Tape the terminals',
+          'bin_color': 'Red',
+          'confidence': 'High',
+          'instructions': 'Tape the terminals. Use the red bin.',
+          'analysis_mode': 'ai_vision',
           'points': 25,
           'fallback': false,
-          'source': 'ai_vision',
-          'confidence': 0.88,
           'preparation_steps': <String>['Tape the terminals', 'Use the red bin'],
-          'why': 'Li-ion cells are hazardous.',
         }),
         200,
         headers: <String, String>{'content-type': 'application/json'},
@@ -94,8 +116,10 @@ void main() {
     expect(captured.headers['content-type'], contains('multipart/form-data'));
     // The multipart body carries raw JPEG bytes, so it is not valid UTF-8.
     expect(String.fromCharCodes(captured.bodyBytes), contains('camera-capture.jpg'));
+    expect(result.displayName, 'AA Alkaline Battery');
     expect(result.category, WasteCategory.hazardous);
     expect(result.source, ClassificationSource.aiVision);
+    expect(result.confidence, 'High');
     expect(result.points, 25);
   });
 
