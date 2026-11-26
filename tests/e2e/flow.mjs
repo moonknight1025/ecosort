@@ -58,8 +58,8 @@ check('one tab panel visible at a time', visiblePanels === 1, `${visiblePanels} 
 
 // 5. set a profile
 await page.fill('#username', 'E2EUser');
-await page.fill('#group-name', 'Home & Family');
-await page.fill('#city', 'Chennai');
+await page.selectOption('#group-select', 'Home & Family');
+await page.selectOption('#city-select', 'Chennai');
 await page.click('#set-profile');
 await page.waitForFunction(() => document.getElementById('eco-score').textContent !== '0' || document.getElementById('toast')?.textContent.includes('Welcome'), null, { timeout: 5000 }).catch(() => {});
 const startScore = await page.textContent('#eco-score');
@@ -104,10 +104,12 @@ check('claimed day cannot be re-claimed from the UI', disabled, `disabled=${disa
 
 // 11. leaderboards: everyone + community groups
 await page.click('.tab[data-tab="rank"]');
-await page.waitForSelector('#group-rank .rank-item', { timeout: 5000 });
+await page.selectOption('#rank-scope', 'groups');
+await page.waitForSelector('#group-rank .rank-item', { state: 'visible', timeout: 5000 });
 const rank = await page.evaluate(() => ({
   groups: document.querySelectorAll('#group-rank .rank-item').length,
   users: document.querySelectorAll('#user-rank .rank-item').length,
+  scope: document.getElementById('rank-scope').value,
   firstGroup: document.querySelector('#group-rank .rank-name')?.textContent.trim().split('\n')[0],
   subtitle: document.querySelector('#user-rank .rank-sub')?.textContent.trim() ?? '',
 }));

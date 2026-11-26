@@ -24,21 +24,36 @@ Two leaderboards are shown: **Top Eco Contributors** (every user, by points) and
 
 ## 1. Preview it in your browser (fastest path)
 
+**One URL: http://127.0.0.1:5000.** The Flask app is the single web interface;
+no second server or Flutter dev server is needed for normal preview.
+
 ```bash
 cd ecosort
 python -m pip install -r requirements.txt   # Flask, Werkzeug, google-genai
 python app.py                                # -> http://127.0.0.1:5000
 ```
 
+The layout is a single column on mobile (verified to 320px with zero horizontal
+overflow) and a two-column scan panel up to the 900px desktop shell.
+
 Open **http://127.0.0.1:5000** and:
 
-1. Type a name, optionally pick or type a community/group and a city, press
-   **Set profile**.
+1. Fill **Your profile**: display name, **Community / group** dropdown (pick a
+   preset or *Custom…* for free text), **City / region** dropdown (same), then
+   **Apply profile**. The header summarises the active profile and the live Eco
+   Score; **⚙ Settings** shows the scan engine (AI vision on/off, model) and the
+   active rate limits, and can reset the local profile.
 2. **Start camera** → allow the permission prompt → **Capture Photo**, or press
    **Upload photo** / tap one of the six sample chips.
 3. Read the disposal guide, then **Toss into Virtual Bin**.
-4. Check **Badges & 7-Day** (claim a day for +15) and **Leaderboards** — *Top Eco
-   Contributors* + *Community & Group Standings*.
+4. In **Scan & Bin** you also have: a **quick-sample dropdown + Scan sample**
+   button next to the six preset chips, a **category-override dropdown** on the
+   result card (correct the stream before tossing — points are still derived
+   server-side for the chosen stream), and a camera **Switch camera** dropdown
+   that appears only when the browser reports more than one camera.
+5. **Badges & 7-Day** has a filter (*All / Pending only / Completed only*) above
+   the checklist. **Leaderboards** has a **View** dropdown (*All contributors* vs
+   *Community & group standings*) plus a **Community** filter.
 
 Camera needs a secure context: `http://127.0.0.1` and `http://localhost` count as
 secure, a LAN IP (`http://192.168.x.x`) does **not** — the UI tells you and falls
@@ -200,6 +215,12 @@ cd tests/e2e && npm install
 node flow.mjs                     # full demo + 375 px layout, 13 checks
 node camera.mjs                   # live camera, fallbacks, 429, 12 checks
 ```
+
+`tests/e2e/controls.mjs` covers the control surface itself: profile dropdowns
+with custom entry, the settings popover, the sample dropdown, the category
+override (proving the recyclable bin gets the point, not the hazardous one), the
+challenge filter, the leaderboard scope/filter, and no horizontal overflow at
+375px and 320px.
 
 `tests/e2e/*.mjs` use `playwright-core` against the **installed** Chrome, so no
 browser is downloaded and nothing is added to the app. `camera.mjs` uses

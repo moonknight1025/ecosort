@@ -671,6 +671,57 @@ def main() -> int:
 
     check("15. campus-era database upgrades in place", legacy_database_migration)
 
+    # ---------------------------------------------------------------- 16
+    def category_override_channel() -> str:
+        """The UI's "correct the category" control must be explicit and validated,
+        and must not become a way to supply points."""
+        created_user = client.post(
+            "/api/user", json={"username": "OverrideProbe"}
+        ).get_json()["user"]
+        user_id = created_user["id"]
+
+        # Legacy `category`/`points` fields are still ignored outright.
+        forged = client.post(
+            "/api/dispose",
+            json={
+                "user_id": user_id,
+                "item_name": "Plastic Bottle",
+                "category": "Hazardous Waste",
+                "points": 999999,
+            },
+        ).get_json()
+        assert forged["logged"]["category"] == "Recyclable Waste", "forged category honoured"
+        assert forged["new_points"] == 15, f"forged points honoured: {forged['new_points']}"
+        assert forged["logged"]["overridden"] is False, "override flag set without an override"
+
+        # The explicit channel is honoured, with server-derived points.
+        corrected = client.post(
+            "/api/dispose",
+            json={
+                "user_id": user_id,
+                "item_name": "Mystery wrapper",
+                "category_override": "Hazardous Waste",
+                "points": 1,
+            },
+        ).get_json()
+        assert corrected["logged"]["category"] == "Hazardous Waste", "override ignored"
+        assert corrected["logged"]["points"] == 25, "points not derived from override stream"
+        assert corrected["logged"]["overridden"] is True, "override flag not reported"
+        assert corrected["new_points"] == 40, f"total {corrected['new_points']}"
+
+        # Anything outside the five streams is rejected, not coerced.
+        bad = client.post(
+            "/api/dispose",
+            json={"user_id": user_id, "item_name": "box", "category_override": "Compost"},
+        )
+        assert bad.status_code == 400, f"invalid override accepted: {bad.status_code}"
+        assert "allowed" in bad.get_json(), "rejection did not list the allowed streams"
+
+        return "forged fields ignored; override honoured at 25 pts; invalid override 400"
+
+    check("16. category override is explicit, validated and point-free",
+          category_override_channel)
+
     # ---------------------------------------------------------------- summary
     print(f"\n{len(PASSED)} passed, {len(FAILED)} failed")
     if FAILED:

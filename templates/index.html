@@ -17,61 +17,91 @@
           <span class="brand-mark" aria-hidden="true">&#9851;</span>
           <span class="brand-text">
             <strong>EcoSort</strong>
-            <small>Sort smart, score green</small>
+            <small>Make every piece of waste count</small>
           </span>
         </div>
-        <div class="score-badge" aria-live="polite">
-          <span class="score-label">Eco Score</span>
-          <strong id="eco-score">0</strong>
+
+        <div class="header-actions">
+          <div class="score-badge" aria-live="polite">
+            <span class="score-label">Eco Score</span>
+            <strong id="eco-score">0</strong>
+          </div>
+
+          <details class="settings" id="settings">
+            <summary class="btn btn-ghost" aria-label="Settings">&#9881; Settings</summary>
+            <div class="settings-panel">
+              <p class="settings-title">Scan engine</p>
+              <p class="settings-line" id="vision-status">Checking vision status&hellip;</p>
+              <p class="settings-line" id="limits-status"></p>
+              <hr />
+              <p class="settings-title">Active profile</p>
+              <p class="settings-line" id="profile-status">None</p>
+              <button class="btn btn-ghost btn-block" id="reset-profile" type="button">
+                Reset active profile
+              </button>
+            </div>
+          </details>
         </div>
       </header>
 
-      <section class="profile-bar" aria-label="Your profile">
-        <label class="field">
-          <span class="field-label">Your name</span>
-          <input
-            id="username"
-            name="username"
-            type="text"
-            placeholder="e.g. Priya"
-            autocomplete="nickname"
-            maxlength="32"
-          />
-        </label>
-        <label class="field">
-          <span class="field-label">Community / group</span>
-          <input
-            id="group-name"
-            name="group_name"
-            type="text"
-            placeholder="General Community"
-            list="group-options"
-            maxlength="48"
-          />
-          <datalist id="group-options">
-            {% for group in group_presets %}
-            <option value="{{ group }}"></option>
-            {% endfor %}
-          </datalist>
-          <small class="field-hint">Pick a suggestion or type your own — home, street, society, office.</small>
-        </label>
-        <label class="field">
-          <span class="field-label">City / region</span>
-          <input
-            id="city"
-            name="city"
-            type="text"
-            placeholder="Local Area"
-            list="city-options"
-            maxlength="48"
-          />
-          <datalist id="city-options">
-            {% for city in city_presets %}
-            <option value="{{ city }}"></option>
-            {% endfor %}
-          </datalist>
-        </label>
-        <button id="set-profile" class="btn btn-primary" type="button">Set Profile</button>
+      <section class="card profile-card" aria-label="Your profile">
+        <div class="card-head">
+          <h2>Your profile</h2>
+          <p class="card-sub" id="profile-summary">Set a name, community and city to start.</p>
+        </div>
+
+        <div class="form-grid">
+          <label class="field" for="username">
+            <span class="field-label">Display name</span>
+            <input
+              id="username"
+              name="username"
+              type="text"
+              placeholder="e.g. Priya"
+              autocomplete="nickname"
+              maxlength="32"
+            />
+          </label>
+
+          <label class="field" for="group-select">
+            <span class="field-label">Community / group</span>
+            <select id="group-select">
+              {% for group in group_presets %}
+              <option value="{{ group }}">{{ group }}</option>
+              {% endfor %}
+              <option value="__custom__">Custom&hellip;</option>
+            </select>
+          </label>
+
+          <label class="field is-hidden" id="group-custom-field" for="group-custom">
+            <span class="field-label">Custom group</span>
+            <input
+              id="group-custom"
+              type="text"
+              placeholder="e.g. My Flat 4B or Ward 7"
+              maxlength="48"
+            />
+          </label>
+
+          <label class="field" for="city-select">
+            <span class="field-label">City / region</span>
+            <select id="city-select">
+              {% for city in city_presets %}
+              <option value="{{ city }}">{{ city }}</option>
+              {% endfor %}
+              <option value="__custom__">Custom&hellip;</option>
+            </select>
+          </label>
+
+          <label class="field is-hidden" id="city-custom-field" for="city-custom">
+            <span class="field-label">Custom city / region</span>
+            <input id="city-custom" type="text" placeholder="e.g. Fort Kochi" maxlength="48" />
+          </label>
+
+          <div class="field field-actions">
+            <button class="btn btn-primary" id="set-profile" type="button">Apply profile</button>
+          </div>
+        </div>
       </section>
 
       <nav class="tabs" role="tablist" aria-label="EcoSort sections">
@@ -112,67 +142,83 @@
 
       <main>
         <section id="tab-scan" class="panel is-active" role="tabpanel" aria-labelledby="tab-btn-scan">
-          <h2 class="panel-title">Scan &amp; Bin</h2>
-          <p class="panel-hint">Scan with your camera, upload a photo, or tap a sample item.</p>
-          <p class="capability-note" id="capability-note" role="status"></p>
-
-          <section class="camera-card" aria-label="Camera scanner">
-            <div class="camera-stage" id="dropzone">
-              <video
-                id="camera-video"
-                class="camera-video"
-                playsinline
-                muted
-                autoplay
-                hidden
-              ></video>
-              <img id="capture-preview" class="capture-preview" alt="Captured waste preview" hidden />
-              <div class="camera-placeholder" id="camera-placeholder">
-                <span class="dropzone-icon" aria-hidden="true">&#128247;</span>
-                <strong>Scan waste with your camera</strong>
-                <small>Live capture stays on this device. Drop a photo here too.</small>
+          <div class="scan-grid">
+            <section class="card camera-card" aria-label="Camera">
+              <div class="card-head">
+                <h2>Live camera</h2>
+                <p class="card-sub" id="camera-status" role="status" aria-live="polite">
+                  Nothing captured yet.
+                </p>
               </div>
-            </div>
 
-            <div class="camera-controls">
-              <button class="btn btn-primary" id="start-camera" type="button">Start camera</button>
-              <button class="btn" id="capture-photo" type="button" hidden>Capture Photo</button>
-              <button class="btn" id="switch-camera" type="button" hidden>Switch Camera</button>
-              <button class="btn" id="retake" type="button" hidden>Retake</button>
-              <button class="btn" id="stop-camera" type="button" hidden>Stop Camera</button>
-              <label class="btn" for="image-input">Upload photo</label>
-              <input
-                id="image-input"
-                name="image"
-                type="file"
-                accept="image/*"
-                capture="environment"
-                hidden
-              />
-            </div>
+              <div class="camera-stage" id="dropzone">
+                <video id="camera-video" class="camera-video" playsinline muted autoplay hidden></video>
+                <img id="capture-preview" class="capture-preview" alt="Captured waste preview" hidden />
+                <div class="camera-placeholder" id="camera-placeholder">
+                  <span class="placeholder-icon" aria-hidden="true">&#128247;</span>
+                  <strong>Camera or drop a photo here</strong>
+                  <small>Frames stay on this device &middot; processed by the local server</small>
+                </div>
+              </div>
 
-            <p class="camera-status" id="camera-status" role="status" aria-live="polite"></p>
-          </section>
+              <div class="control-row">
+                <button class="btn btn-primary" id="start-camera" type="button">Start camera</button>
+                <button class="btn" id="capture-photo" type="button" hidden>Capture photo</button>
+                <select id="switch-camera" class="is-hidden" aria-label="Switch camera">
+                  <option value="">Switch camera&hellip;</option>
+                </select>
+                <button class="btn" id="retake" type="button" hidden>Retake</button>
+                <button class="btn" id="stop-camera" type="button" hidden>Stop camera</button>
+              </div>
+            </section>
 
-          <div class="presets" aria-label="Quick test items">
-            <button class="preset" type="button" data-preset="bottle">Plastic Bottle</button>
-            <button class="preset" type="button" data-preset="banana">Banana Peel</button>
-            <button class="preset" type="button" data-preset="battery">Used Battery</button>
-            <button class="preset" type="button" data-preset="box">Cardboard Box</button>
-            <button class="preset" type="button" data-preset="charger">Broken Charger</button>
-            <button class="preset" type="button" data-preset="wrapper">Chip Wrapper</button>
+            <section class="card sample-card" aria-label="Upload or sample">
+              <div class="card-head">
+                <h2>Upload or sample</h2>
+                <p class="card-sub">No camera? Upload a photo or scan a demo item.</p>
+              </div>
+
+              <label class="btn btn-block upload-label" for="image-input">Upload photo</label>
+              <input id="image-input" name="image" type="file" accept="image/*" capture="environment" hidden />
+
+              <div class="form-grid form-grid-tight">
+                <label class="field" for="sample-select">
+                  <span class="field-label">Quick sample</span>
+                  <select id="sample-select">
+                    {% for label, keyword in sample_presets %}
+                    <option value="{{ keyword }}">{{ label }}</option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <div class="field field-actions">
+                  <button class="btn" id="use-sample" type="button">Scan sample</button>
+                </div>
+              </div>
+
+              <div class="presets" aria-label="Quick test items">
+                <button class="preset" type="button" data-preset="bottle">Plastic Bottle</button>
+                <button class="preset" type="button" data-preset="banana">Banana Peel</button>
+                <button class="preset" type="button" data-preset="battery">Used Battery</button>
+                <button class="preset" type="button" data-preset="box">Cardboard Box</button>
+                <button class="preset" type="button" data-preset="charger">Broken Charger</button>
+                <button class="preset" type="button" data-preset="wrapper">Chip Wrapper</button>
+              </div>
+            </section>
           </div>
 
-          <article class="result-card" id="result-card" hidden>
-            <header class="result-head">
+          <article class="card result-card" id="result-card" hidden>
+            <div class="result-head">
               <span class="category-chip" id="result-category">Dry Waste</span>
               <span class="points-chip" id="result-points">+10 pts</span>
               <span class="source-chip" id="result-source" hidden></span>
-            </header>
-            <h3 id="result-name">Scan an item to begin</h3>
-            <p id="result-instructions">Disposal instructions will appear here.</p>
+            </div>
 
-            <div class="result-analysis" id="result-analysis" hidden>
+            <h3 id="result-name">Scan an item to begin</h3>
+            <p id="result-instructions" class="result-instructions">
+              Disposal instructions will appear here.
+            </p>
+
+            <div id="result-analysis" hidden>
               <p class="result-confidence" id="result-confidence"></p>
               <ol class="result-steps" id="result-steps"></ol>
               <p class="result-why" id="result-why"></p>
@@ -181,19 +227,31 @@
             <p class="result-note" id="result-note" hidden></p>
             <p class="result-local-note" id="result-local-note" hidden></p>
 
-            <button class="btn btn-dispose" id="dispose-btn" type="button">
-              Toss into Virtual Bin
-            </button>
+            <div class="dispose-row">
+              <label class="field" for="category-override">
+                <span class="field-label">Correct the category (optional)</span>
+                <select id="category-override">
+                  <option value="">Keep detected result</option>
+                  <option value="Wet Waste">Wet Waste &middot; Green</option>
+                  <option value="Recyclable Waste">Recyclable Waste &middot; Blue</option>
+                  <option value="Dry Waste">Dry Waste &middot; Gray</option>
+                  <option value="E-Waste">E-Waste &middot; Purple</option>
+                  <option value="Hazardous Waste">Hazardous Waste &middot; Red</option>
+                </select>
+              </label>
+              <button class="btn btn-primary" id="dispose-btn" type="button">
+                Toss into virtual bin
+              </button>
+            </div>
+            <p class="override-hint" id="override-hint" hidden>
+              Points are recalculated by the server for the stream you choose.
+            </p>
           </article>
 
-          <h3 class="section-title">Virtual Recycling Bins</h3>
+          <h2 class="section-title">Virtual recycling bins</h2>
           <div class="bins" id="bins">
             {% for category, meta in bins %}
-            <div
-              class="bin"
-              data-category="{{ category }}"
-              style="--bin: {{ meta.hex }}"
-            >
+            <div class="bin" data-category="{{ category }}" style="--bin: {{ meta.hex }}">
               <span class="bin-emoji" aria-hidden="true">&#128686;</span>
               <span class="bin-count" data-count-for="{{ category }}">0</span>
               <span class="bin-name">{{ category }}</span>
@@ -204,7 +262,7 @@
         </section>
 
         <section id="tab-badges" class="panel" role="tabpanel" aria-labelledby="tab-btn-badges" hidden>
-          <h2 class="panel-title">Badges</h2>
+          <h2 class="section-title">Achievement badges</h2>
           <div class="badges">
             {% for badge_id, badge_name, badge_requirement in badges %}
             <div class="badge is-locked" data-badge="{{ badge_id }}">
@@ -216,11 +274,21 @@
             {% endfor %}
           </div>
 
-          <h2 class="panel-title">7-Day Zero-Waste Challenge</h2>
-          <p class="panel-hint">Claim {{ challenge_reward }} Eco Points for each day you complete.</p>
-          <ol class="challenges">
+          <div class="section-head">
+            <h2 class="section-title">7-Day zero-waste challenge</h2>
+            <label class="inline-control" for="challenge-filter">
+              <span class="field-label">Show</span>
+              <select id="challenge-filter">
+                <option value="all">All challenges</option>
+                <option value="pending">Pending only</option>
+                <option value="completed">Completed only</option>
+              </select>
+            </label>
+          </div>
+
+          <ol class="challenges" id="challenges">
             {% for day, task in challenge_tasks.items() %}
-            <li class="challenge" data-day="{{ day }}">
+            <li class="challenge" data-day="{{ day }}" data-completed="false">
               <span class="challenge-day">Day {{ day }}</span>
               <span class="challenge-task">{{ task }}</span>
               <button class="btn btn-claim" type="button" data-claim-day="{{ day }}">
@@ -232,29 +300,42 @@
         </section>
 
         <section id="tab-rank" class="panel" role="tabpanel" aria-labelledby="tab-btn-rank" hidden>
-          <h2 class="panel-title">Top Eco Contributors</h2>
-          <p class="panel-hint">Everyone, everywhere — ranked by Eco Points.</p>
+          <div class="section-head">
+            <h2 class="section-title">Leaderboards</h2>
+            <div class="rank-controls">
+              <label class="inline-control" for="rank-scope">
+                <span class="field-label">View</span>
+                <select id="rank-scope">
+                  <option value="contributors">All contributors</option>
+                  <option value="groups">Community &amp; group standings</option>
+                </select>
+              </label>
+              <label class="inline-control" for="rank-filter" id="rank-filter-field" hidden>
+                <span class="field-label">Community</span>
+                <select id="rank-filter">
+                  <option value="">All communities</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
           <ol class="rank-list" id="user-rank">
             <li class="rank-empty">Individual rankings load once someone logs waste.</li>
           </ol>
-
-          <h2 class="panel-title">Community &amp; Group Standings</h2>
-          <p class="panel-hint">Households, streets, societies, offices — any group can compete.</p>
-          <ul class="rank-list" id="group-rank">
+          <ul class="rank-list" id="group-rank" hidden>
             <li class="rank-empty">Group standings load once a profile is set.</li>
           </ul>
         </section>
       </main>
 
       <footer class="app-footer">
-        <small>EcoSort MVP &middot; Flask + SQLite &middot; offline-first</small>
+        <small>EcoSort &middot; Flask + SQLite &middot; offline-first, AI vision optional</small>
       </footer>
     </div>
 
     <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
     <script type="application/json" id="domain-config">{{ domain_config | tojson }}</script>
-
     <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
   </body>
 </html>
