@@ -1,0 +1,18 @@
+# Dart / Flutter build artefacts
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Web build output (generated)
+build/web/
+
+# OS noise
+.DS_Store
+Thumbs.db

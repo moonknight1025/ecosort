@@ -1,0 +1,11 @@
+{
+  "name": "EcoSort",
+  "short_name": "EcoSort",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#F4F7F4",
+  "theme_color": "#2E7D32",
+  "description": "Gamified waste segregation for campuses.",
+  "orientation": "portrait-primary",
+  "prefer_related_applications": false
+}
