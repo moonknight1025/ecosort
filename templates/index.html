@@ -1,341 +1,551 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>EcoSort &middot; Sort smart, score green</title>
-    <link
-      rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%E2%99%BB%3C/text%3E%3C/svg%3E"
-    />
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
-  </head>
-  <body>
-    <div class="app-shell">
-      <header class="app-header">
-        <div class="brand">
-          <span class="brand-mark" aria-hidden="true">&#9851;</span>
-          <span class="brand-text">
-            <strong>EcoSort</strong>
-            <small>Make every piece of waste count</small>
-          </span>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EcoSort — Everyday waste sorting companion</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link
+    rel="icon"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23223c2b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z'/%3E%3C/svg%3E"
+  />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body>
+  <canvas id="leafCanvas" aria-hidden="true"></canvas>
+
+  <svg class="icon-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-leaf" viewBox="0 0 24 24">
+      <path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z" />
+      <path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12" />
+    </symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24">
+      <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
+      <circle cx="12" cy="13" r="3" />
+    </symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <path d="m17 8-5-5-5 5" />
+      <path d="M12 3v12" />
+    </symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24">
+      <path d="M3 6h18" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+    </symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24">
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+      <circle cx="12" cy="12" r="3" />
+    </symbol>
+    <symbol id="i-recycle" viewBox="0 0 24 24">
+      <path d="M7 19H4.8a1.8 1.8 0 0 1-1.6-2.6l2.4-4.2" />
+      <path d="m9 19-2 3 3 1" />
+      <path d="M14 5h2.2a1.8 1.8 0 0 1 1.6 2.6l-2.4 4.2" />
+      <path d="m15 5 2-3-3-1" />
+      <path d="M9.5 9.5 12 5l2.5 4.5" />
+      <path d="M9.5 14.5 12 19l2.5-4.5" />
+    </symbol>
+    <symbol id="i-file" viewBox="0 0 24 24">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <path d="M14 2v6h6" />
+    </symbol>
+    <symbol id="i-plug" viewBox="0 0 24 24">
+      <path d="M12 22v-5" />
+      <path d="M9 8V2" />
+      <path d="M15 8V2" />
+      <path d="M18 8v4a6 6 0 0 1-12 0V8z" />
+    </symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24">
+      <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+      <path d="M12 9v4" />
+      <path d="M12 17h.01" />
+    </symbol>
+    <symbol id="i-award" viewBox="0 0 24 24">
+      <circle cx="12" cy="8" r="6" />
+      <path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11" />
+    </symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24">
+      <rect width="18" height="18" x="3" y="4" rx="2" />
+      <path d="M16 2v4" />
+      <path d="M8 2v4" />
+      <path d="M3 10h18" />
+    </symbol>
+    <symbol id="i-check" viewBox="0 0 24 24">
+      <path d="M20 6 9 17l-5-5" />
+    </symbol>
+    <symbol id="i-info" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 16v-4" />
+      <path d="M12 8h.01" />
+    </symbol>
+    <symbol id="i-square" viewBox="0 0 24 24">
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+    </symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24">
+      <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
+      <path d="M21 3v5h-5" />
+      <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
+      <path d="M3 21v-5h5" />
+    </symbol>
+    <symbol id="i-volume" viewBox="0 0 24 24">
+      <path d="M11 5 6 9H3v6h3l5 4V5Z" />
+      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+    </symbol>
+    <symbol id="i-star" viewBox="0 0 24 24">
+      <path d="m12 2 3.09 6.26L22 9.27l-5 4.87L18.18 21 12 17.77 5.82 21 7 14.14l-5-4.87 6.91-1.01L12 2Z" />
+    </symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24">
+      <rect width="18" height="11" x="3" y="11" rx="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </symbol>
+  </svg>
+
+  <div class="app-shell">
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg class="icon icon-lg"><use href="#i-recycle"></use></svg>
+        </div>
+        <div class="brand-text">
+          <div class="brand-title-row">
+            <h1 class="brand-title">EcoSort</h1>
+            <span class="version-badge">Local-first</span>
+          </div>
+          <p class="brand-tagline">Everyday waste sorting &amp; regional recycling companion</p>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <div id="ecoPointsPill" class="points-pill" aria-live="polite">
+          <svg class="icon points-icon" aria-hidden="true"><use href="#i-star"></use></svg>
+          <span class="points-label">Points:</span>
+          <strong id="ecoPointsValue">0</strong>
         </div>
 
-        <div class="header-actions">
-          <div class="score-badge" aria-live="polite">
-            <span class="score-label">Eco Score</span>
-            <strong id="eco-score">0</strong>
+        <div class="status-pill" id="networkStatus">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="networkLabel">Local engine</span>
+        </div>
+
+        <button
+          id="settingsToggleBtn"
+          type="button"
+          class="settings-trigger"
+          aria-expanded="false"
+          aria-controls="settingsPopover"
+          aria-label="Settings"
+        >
+          <svg class="icon" aria-hidden="true"><use href="#i-settings"></use></svg>
+        </button>
+
+        <div id="settingsPopover" class="settings-popover hidden" role="dialog" aria-label="EcoSort settings">
+          <div class="settings-section">
+            <p class="settings-heading">Scan engine</p>
+            <p class="settings-line" id="visionStatus">Checking AI vision&hellip;</p>
+            <p class="settings-line" id="limitsStatus"></p>
           </div>
 
-          <details class="settings" id="settings">
-            <summary class="btn btn-ghost" aria-label="Settings">&#9881; Settings</summary>
-            <div class="settings-panel">
-              <p class="settings-title">Scan engine</p>
-              <p class="settings-line" id="vision-status">Checking vision status&hellip;</p>
-              <p class="settings-line" id="limits-status"></p>
-              <hr />
-              <p class="settings-title">Active profile</p>
-              <p class="settings-line" id="profile-status">None</p>
-              <button class="btn btn-ghost btn-block" id="reset-profile" type="button">
-                Reset active profile
+          <div class="settings-section">
+            <p class="settings-heading">Preferences</p>
+            <label class="settings-toggle">
+              <span>Falling leaves</span>
+              <input id="settingsLeaves" type="checkbox" checked />
+            </label>
+            <label class="settings-toggle">
+              <span>Auto-read guidance</span>
+              <input id="settingsAutoRead" type="checkbox" />
+            </label>
+          </div>
+
+          <div class="settings-section">
+            <p class="settings-heading">Active profile</p>
+            <p class="settings-line" id="profileStatus">No profile yet</p>
+            <button id="resetProfileBtn" type="button" class="btn btn-secondary settings-reset">
+              <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>
+              <span>Reset local profile</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <section class="card profile-card" aria-label="User profile settings">
+      <form id="profileForm" class="profile-form">
+        <div class="field-group">
+          <label for="displayNameInput" class="field-label">Eco-citizen</label>
+          <input id="displayNameInput" type="text" class="input" placeholder="Your name" maxlength="32" autocomplete="nickname" required />
+        </div>
+
+        <div class="field-group">
+          <label for="communitySelect" class="field-label">Community hub</label>
+          <select id="communitySelect" class="select">
+            {% for group in group_presets %}
+            <option value="{{ group }}">{{ group }}</option>
+            {% endfor %}
+            <option value="__custom__">Custom&hellip;</option>
+          </select>
+        </div>
+
+        <div class="field-group">
+          <label for="citySelect" class="field-label">City / region</label>
+          <select id="citySelect" class="select">
+            {% for city in city_presets %}
+            <option value="{{ city }}">{{ city }}</option>
+            {% endfor %}
+            <option value="__custom__">Other / custom city</option>
+          </select>
+        </div>
+
+        <button type="submit" class="btn btn-primary profile-apply">
+          <span>Apply</span>
+          <svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>
+        </button>
+
+        <div id="customProfileWrap" class="profile-custom-wrap hidden">
+          <div id="customCommunityField" class="field-group hidden">
+            <label for="customCommunityInput" class="field-label">Custom community</label>
+            <input id="customCommunityInput" type="text" class="input" placeholder="Enter your group name" maxlength="48" />
+          </div>
+          <div id="customCityField" class="field-group hidden">
+            <label for="customCityInput" class="field-label">Custom city / region</label>
+            <input id="customCityInput" type="text" class="input" placeholder="Enter your city or region" maxlength="48" />
+          </div>
+        </div>
+      </form>
+    </section>
+
+    <nav class="tabs-bar" role="tablist" aria-label="EcoSort views">
+      <button id="tabBtnScan" type="button" class="tab-btn" role="tab" aria-selected="true" aria-controls="panelScan">
+        <svg class="icon" aria-hidden="true"><use href="#i-camera"></use></svg>
+        <span>Scan &amp; bin</span>
+      </button>
+      <button id="tabBtnBadges" type="button" class="tab-btn" role="tab" aria-selected="false" aria-controls="panelBadges">
+        <svg class="icon" aria-hidden="true"><use href="#i-award"></use></svg>
+        <span>Badges &amp; 7-day</span>
+      </button>
+    </nav>
+
+    <main id="panelScan" class="tab-panel" role="tabpanel" aria-labelledby="tabBtnScan">
+      <section class="card capture-card" aria-label="Waste scanner and samples">
+        <div class="card-head">
+          <div class="head-title">
+            <span class="status-dot" aria-hidden="true"></span>
+            <h2 class="section-title">1. Capture or select item</h2>
+          </div>
+          <span class="engine-pill">AI Vision engine: <span id="visionStatusShort">checking</span></span>
+        </div>
+
+        <div class="capture-grid">
+          <div class="capture-controls">
+            <p class="hint">Snap a photo with your device camera, upload an image, or choose a pre-calibrated sample item for testing.</p>
+
+            <div class="capture-actions">
+              <button id="startCameraBtn" type="button" class="btn btn-primary">
+                <svg class="icon" aria-hidden="true"><use href="#i-camera"></use></svg>
+                <span>Camera scan</span>
+              </button>
+              <label for="photoUploadInput" class="btn btn-secondary upload-label">
+                <svg class="icon" aria-hidden="true"><use href="#i-upload"></use></svg>
+                <span>Upload photo</span>
+              </label>
+              <input id="photoUploadInput" type="file" accept="image/*" capture="environment" class="upload-input-sr" />
+              <button id="capturePhotoBtn" type="button" class="btn btn-primary hidden">
+                <svg class="icon" aria-hidden="true"><use href="#i-camera"></use></svg>
+                <span>Capture frame</span>
+              </button>
+              <button id="stopCameraBtn" type="button" class="btn btn-ghost hidden">
+                <svg class="icon" aria-hidden="true"><use href="#i-square"></use></svg>
+                <span>Stop camera</span>
               </button>
             </div>
-          </details>
-        </div>
-      </header>
 
-      <section class="card profile-card" aria-label="Your profile">
-        <div class="card-head">
-          <h2>Your profile</h2>
-          <p class="card-sub" id="profile-summary">Set a name, community and city to start.</p>
-        </div>
+            <div id="cameraSwitchWrap" class="field-group hidden">
+              <label for="cameraDeviceSelect" class="field-label">Switch camera</label>
+              <select id="cameraDeviceSelect" class="select"></select>
+            </div>
 
-        <div class="form-grid">
-          <label class="field" for="username">
-            <span class="field-label">Display name</span>
-            <input
-              id="username"
-              name="username"
-              type="text"
-              placeholder="e.g. Priya"
-              autocomplete="nickname"
-              maxlength="32"
-            />
-          </label>
+            <div class="sample-box">
+              <label for="samplePresetSelect" class="field-label">Quick-pick sample items</label>
+              <select id="samplePresetSelect" class="select">
+                <option value="">Choose a sample item</option>
+                {% for label, keyword in sample_presets %}
+                <option value="{{ keyword }}">{{ label }}</option>
+                {% endfor %}
+              </select>
+              <div class="chips-grid" aria-label="Quick-test sample chips">
+                {% for label, keyword in sample_presets %}
+                <button type="button" class="preset-chip" data-preset="{{ keyword }}">{{ label }}</button>
+                {% endfor %}
+              </div>
+            </div>
 
-          <label class="field" for="group-select">
-            <span class="field-label">Community / group</span>
-            <select id="group-select">
-              {% for group in group_presets %}
-              <option value="{{ group }}">{{ group }}</option>
-              {% endfor %}
-              <option value="__custom__">Custom&hellip;</option>
-            </select>
-          </label>
+            <p class="tip">Tip: keep labels visible so the engine can detect recycling codes such as PET 1, HDPE 2, or PP 5.</p>
+          </div>
 
-          <label class="field is-hidden" id="group-custom-field" for="group-custom">
-            <span class="field-label">Custom group</span>
-            <input
-              id="group-custom"
-              type="text"
-              placeholder="e.g. My Flat 4B or Ward 7"
-              maxlength="48"
-            />
-          </label>
+          <div class="capture-preview">
+            <div class="camera-stage">
+              <div id="cameraPlaceholder" class="camera-placeholder">
+                <svg class="icon icon-xl" aria-hidden="true"><use href="#i-camera"></use></svg>
+                <span>Point your camera, upload a photo, or choose a sample below.</span>
+              </div>
+              <video id="cameraVideo" class="camera-video hidden" autoplay playsinline muted></video>
+              <img id="imagePreview" class="preview-img hidden" alt="Selected waste item preview" />
+              <div class="scan-frame" aria-hidden="true">
+                <span>Active analysis matrix</span>
+              </div>
+              <button id="clearScanBtn" type="button" class="clear-scan-btn">
+                <svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg>
+                <span>Clear</span>
+              </button>
+            </div>
 
-          <label class="field" for="city-select">
-            <span class="field-label">City / region</span>
-            <select id="city-select">
-              {% for city in city_presets %}
-              <option value="{{ city }}">{{ city }}</option>
-              {% endfor %}
-              <option value="__custom__">Custom&hellip;</option>
-            </select>
-          </label>
-
-          <label class="field is-hidden" id="city-custom-field" for="city-custom">
-            <span class="field-label">Custom city / region</span>
-            <input id="city-custom" type="text" placeholder="e.g. Fort Kochi" maxlength="48" />
-          </label>
-
-          <div class="field field-actions">
-            <button class="btn btn-primary" id="set-profile" type="button">Apply profile</button>
+            <div id="cameraFallbackBox" class="camera-fallback hidden" role="status">
+              <strong>Camera unavailable:</strong> <span id="cameraFallbackMsg"></span>
+              Use <strong>Upload photo</strong> or a <strong>quick sample</strong> below.
+            </div>
           </div>
         </div>
       </section>
 
-      <nav class="tabs" role="tablist" aria-label="EcoSort sections">
-        <button
-          class="tab is-active"
-          id="tab-btn-scan"
-          role="tab"
-          type="button"
-          aria-selected="true"
-          aria-controls="tab-scan"
-          data-tab="scan"
-        >
-          Scan &amp; Bin
-        </button>
-        <button
-          class="tab"
-          id="tab-btn-badges"
-          role="tab"
-          type="button"
-          aria-selected="false"
-          aria-controls="tab-badges"
-          data-tab="badges"
-        >
-          Badges &amp; 7-Day
-        </button>
-        <button
-          class="tab"
-          id="tab-btn-rank"
-          role="tab"
-          type="button"
-          aria-selected="false"
-          aria-controls="tab-rank"
-          data-tab="rank"
-        >
-          Leaderboards
-        </button>
-      </nav>
+      <section class="card result-card" aria-label="Sorting guide">
+        <div id="resultEmptyState" class="result-empty">
+          <svg class="icon icon-xl" aria-hidden="true"><use href="#i-recycle"></use></svg>
+          <strong>No item scanned</strong>
+          <p>Capture, upload, or choose a sample to see sorting steps.</p>
+        </div>
 
-      <main>
-        <section id="tab-scan" class="panel is-active" role="tabpanel" aria-labelledby="tab-btn-scan">
-          <div class="scan-grid">
-            <section class="card camera-card" aria-label="Camera">
-              <div class="card-head">
-                <h2>Live camera</h2>
-                <p class="card-sub" id="camera-status" role="status" aria-live="polite">
-                  Nothing captured yet.
-                </p>
+        <div id="resultActiveState" class="hidden">
+          <div class="result-header">
+            <div class="result-head-main">
+              <div class="result-badge-row">
+                <span id="resultCategoryBadge" class="category-badge cat-recyclable">Recyclable Waste</span>
+                <span id="resultBinBadge" class="bin-badge">Blue bin</span>
+                <span id="resultConfidencePill" class="pill pill-confidence">Confidence: n/a</span>
+                <span id="resultModePill" class="pill pill-mode-ai">AI Vision</span>
               </div>
-
-              <div class="camera-stage" id="dropzone">
-                <video id="camera-video" class="camera-video" playsinline muted autoplay hidden></video>
-                <img id="capture-preview" class="capture-preview" alt="Captured waste preview" hidden />
-                <div class="camera-placeholder" id="camera-placeholder">
-                  <span class="placeholder-icon" aria-hidden="true">&#128247;</span>
-                  <strong>Camera or drop a photo here</strong>
-                  <small>Frames stay on this device &middot; processed by the local server</small>
-                </div>
-              </div>
-
-              <div class="control-row">
-                <button class="btn btn-primary" id="start-camera" type="button">Start camera</button>
-                <button class="btn" id="capture-photo" type="button" hidden>Capture photo</button>
-                <select id="switch-camera" class="is-hidden" aria-label="Switch camera">
-                  <option value="">Switch camera&hellip;</option>
-                </select>
-                <button class="btn" id="retake" type="button" hidden>Retake</button>
-                <button class="btn" id="stop-camera" type="button" hidden>Stop camera</button>
-              </div>
-            </section>
-
-            <section class="card sample-card" aria-label="Upload or sample">
-              <div class="card-head">
-                <h2>Upload or sample</h2>
-                <p class="card-sub">No camera? Upload a photo or scan a demo item.</p>
-              </div>
-
-              <label class="btn btn-block upload-label" for="image-input">Upload photo</label>
-              <input id="image-input" name="image" type="file" accept="image/*" capture="environment" hidden />
-
-              <div class="form-grid form-grid-tight">
-                <label class="field" for="sample-select">
-                  <span class="field-label">Quick sample</span>
-                  <select id="sample-select">
-                    {% for label, keyword in sample_presets %}
-                    <option value="{{ keyword }}">{{ label }}</option>
-                    {% endfor %}
-                  </select>
-                </label>
-                <div class="field field-actions">
-                  <button class="btn" id="use-sample" type="button">Scan sample</button>
-                </div>
-              </div>
-
-              <div class="presets" aria-label="Quick test items">
-                <button class="preset" type="button" data-preset="bottle">Plastic Bottle</button>
-                <button class="preset" type="button" data-preset="banana">Banana Peel</button>
-                <button class="preset" type="button" data-preset="battery">Used Battery</button>
-                <button class="preset" type="button" data-preset="box">Cardboard Box</button>
-                <button class="preset" type="button" data-preset="charger">Broken Charger</button>
-                <button class="preset" type="button" data-preset="wrapper">Chip Wrapper</button>
-              </div>
-            </section>
+              <h3 id="resultItemName" class="result-item-name">Plastic Bottle</h3>
+            </div>
+            <span id="resultRewardPill" class="reward-pill">+15</span>
           </div>
 
-          <article class="card result-card" id="result-card" hidden>
-            <div class="result-head">
-              <span class="category-chip" id="result-category">Dry Waste</span>
-              <span class="points-chip" id="result-points">+10 pts</span>
-              <span class="source-chip" id="result-source" hidden></span>
-            </div>
-
-            <h3 id="result-name">Scan an item to begin</h3>
-            <p id="result-instructions" class="result-instructions">
-              Disposal instructions will appear here.
-            </p>
-
-            <div id="result-analysis" hidden>
-              <p class="result-confidence" id="result-confidence"></p>
-              <ol class="result-steps" id="result-steps"></ol>
-              <p class="result-why" id="result-why"></p>
-            </div>
-
-            <p class="result-note" id="result-note" hidden></p>
-            <p class="result-local-note" id="result-local-note" hidden></p>
-
-            <div class="dispose-row">
-              <label class="field" for="category-override">
-                <span class="field-label">Correct the category (optional)</span>
-                <select id="category-override">
-                  <option value="">Keep detected result</option>
-                  <option value="Wet Waste">Wet Waste &middot; Green</option>
-                  <option value="Recyclable Waste">Recyclable Waste &middot; Blue</option>
-                  <option value="Dry Waste">Dry Waste &middot; Gray</option>
-                  <option value="E-Waste">E-Waste &middot; Purple</option>
-                  <option value="Hazardous Waste">Hazardous Waste &middot; Red</option>
-                </select>
-              </label>
-              <button class="btn btn-primary" id="dispose-btn" type="button">
-                Toss into virtual bin
-              </button>
-            </div>
-            <p class="override-hint" id="override-hint" hidden>
-              Points are recalculated by the server for the stream you choose.
-            </p>
-          </article>
-
-          <h2 class="section-title">Virtual recycling bins</h2>
-          <div class="bins" id="bins">
-            {% for category, meta in bins %}
-            <div class="bin" data-category="{{ category }}" style="--bin: {{ meta.hex }}">
-              <span class="bin-emoji" aria-hidden="true">&#128686;</span>
-              <span class="bin-count" data-count-for="{{ category }}">0</span>
-              <span class="bin-name">{{ category }}</span>
-              <span class="bin-color">{{ meta.bin_color }}</span>
-            </div>
-            {% endfor %}
-          </div>
-        </section>
-
-        <section id="tab-badges" class="panel" role="tabpanel" aria-labelledby="tab-btn-badges" hidden>
-          <h2 class="section-title">Achievement badges</h2>
-          <div class="badges">
-            {% for badge_id, badge_name, badge_requirement in badges %}
-            <div class="badge is-locked" data-badge="{{ badge_id }}">
-              <span class="badge-icon" aria-hidden="true">&#127942;</span>
-              <strong>{{ badge_name }}</strong>
-              <small>{{ badge_requirement }}</small>
-              <span class="badge-state">Locked</span>
-            </div>
-            {% endfor %}
-          </div>
-
-          <div class="section-head">
-            <h2 class="section-title">7-Day zero-waste challenge</h2>
-            <label class="inline-control" for="challenge-filter">
-              <span class="field-label">Show</span>
-              <select id="challenge-filter">
-                <option value="all">All challenges</option>
-                <option value="pending">Pending only</option>
-                <option value="completed">Completed only</option>
-              </select>
+          <div class="guide-audio" role="group" aria-label="Sorting guide audio">
+            <button id="readAloudBtn" type="button" class="btn btn-primary guide-audio-btn" aria-pressed="false">
+              <svg class="icon" aria-hidden="true"><use href="#i-volume"></use></svg>
+              <span id="readAloudLabel">Read aloud</span>
+            </button>
+            <label class="auto-read-toggle">
+              <input id="autoReadBtn" type="checkbox" aria-pressed="false" />
+              <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
+              <span>Auto-read</span>
             </label>
           </div>
 
-          <ol class="challenges" id="challenges">
-            {% for day, task in challenge_tasks.items() %}
-            <li class="challenge" data-day="{{ day }}" data-completed="false">
-              <span class="challenge-day">Day {{ day }}</span>
-              <span class="challenge-task">{{ task }}</span>
-              <button class="btn btn-claim" type="button" data-claim-day="{{ day }}">
-                Claim +{{ challenge_reward }}
-              </button>
-            </li>
-            {% endfor %}
-          </ol>
-        </section>
+          <p id="resultVisionNote" class="result-vision-note hidden"></p>
 
-        <section id="tab-rank" class="panel" role="tabpanel" aria-labelledby="tab-btn-rank" hidden>
-          <div class="section-head">
-            <h2 class="section-title">Leaderboards</h2>
-            <div class="rank-controls">
-              <label class="inline-control" for="rank-scope">
-                <span class="field-label">View</span>
-                <select id="rank-scope">
-                  <option value="contributors">All contributors</option>
-                  <option value="groups">Community &amp; group standings</option>
-                </select>
-              </label>
-              <label class="inline-control" for="rank-filter" id="rank-filter-field" hidden>
-                <span class="field-label">Community</span>
-                <select id="rank-filter">
-                  <option value="">All communities</option>
-                </select>
-              </label>
+          <div class="guide-section">
+            <h4 class="guide-heading">
+              <svg class="icon" aria-hidden="true"><use href="#i-file"></use></svg>
+              Preparation &amp; step-by-step instructions
+            </h4>
+            <ol id="resultStepsList" class="steps-list"></ol>
+          </div>
+
+          <div class="prep-check">
+            <div class="prep-head">
+              <h5>Prep check before tossing</h5>
+              <span id="prepCheckStatus">0 of 0 steps</span>
+            </div>
+            <div id="prepChecklist" class="prep-list"></div>
+          </div>
+
+          <div id="resultLocalNote" class="regional-note">
+            <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
+            <div>
+              <strong>Regional note:</strong>
+              <span>Local collection rules vary by area. Check your ward or society notice if unsure.</span>
             </div>
           </div>
 
-          <ol class="rank-list" id="user-rank">
-            <li class="rank-empty">Individual rankings load once someone logs waste.</li>
-          </ol>
-          <ul class="rank-list" id="group-rank" hidden>
-            <li class="rank-empty">Group standings load once a profile is set.</li>
-          </ul>
-        </section>
-      </main>
+          <div class="override-row">
+            <div class="field-group">
+              <label for="binOverrideSelect" class="field-label">Category override</label>
+              <select id="binOverrideSelect" class="select">
+                {% for category, meta in bins %}
+                <option value="{{ category }}">{{ category }} ({{ meta.bin_color }})</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div id="selectedBinTag" class="bin-preview-tag bin-recyclable">
+              <span class="bin-dot" aria-hidden="true"></span>
+              <span>Target bin: Recyclable Waste</span>
+            </div>
+          </div>
 
-      <footer class="app-footer">
-        <small>EcoSort &middot; Flask + SQLite &middot; offline-first, AI vision optional</small>
-      </footer>
-    </div>
+          <button id="tossToBinBtn" type="button" class="btn btn-primary toss-btn">
+            <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>
+            <span>Toss into virtual bin</span>
+          </button>
+        </div>
+      </section>
 
-    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+      <section class="card bins-card" aria-label="Virtual recycling bins">
+        <div class="card-head">
+          <h2 class="section-title">Five virtual target bins</h2>
+          <span class="mono-muted">Live counter</span>
+        </div>
+        <div class="bins-grid">
+          {% for category, meta in bins %}
+          <div class="bin-card bin-{{ meta.slug }}" data-bin-card="{{ category }}">
+            <div class="bin-top">
+              <span class="bin-dot" aria-hidden="true"></span>
+              <span class="bin-count-wrap">
+                <span class="bin-count" data-bin-count="{{ category }}">0</span>
+                <span class="bin-unit">items</span>
+              </span>
+            </div>
+            <div class="bin-name">{{ category }}</div>
+            <p class="bin-desc">{{ meta.description }}</p>
+            <div class="bin-footer">
+              <span>{{ meta.bin_label }}</span>
+              <svg class="icon" aria-hidden="true"><use href="#i-{{ {'wet': 'leaf', 'recyclable': 'recycle', 'dry': 'file', 'ewaste': 'plug', 'hazardous': 'alert'}[meta.slug] }}"></use></svg>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </section>
 
-    <script type="application/json" id="domain-config">{{ domain_config | tojson }}</script>
-    <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
-  </body>
+      <section class="card recent-card" aria-label="Recent sorting activity">
+        <div class="card-head">
+          <h2 class="section-title">Recent sorting activity</h2>
+          <span class="mono-muted">This session</span>
+        </div>
+        <div id="recentActivityList" class="recent-list">
+          <p class="empty-state">No disposals yet.</p>
+        </div>
+      </section>
+    </main>
+
+    <section id="panelBadges" class="tab-panel hidden" role="tabpanel" aria-labelledby="tabBtnBadges">
+      <section class="card sprint-card" aria-label="7-day zero-waste challenge">
+        <div class="sprint-head">
+          <div>
+            <span class="eyebrow">Active weekly streak</span>
+            <h2 class="section-title">7-day zero-waste sprint</h2>
+            <p class="sprint-desc">Sort at least three household items correctly each day to unlock the weekly badge.</p>
+          </div>
+          <div class="sprint-metric">
+            <div>
+              <span>Progress</span>
+              <strong id="challengeProgressText">0 of 7 days</strong>
+            </div>
+            <div class="sprint-percent" id="challengeProgressPercent">0%</div>
+          </div>
+        </div>
+
+        <div class="progress-track" aria-hidden="true">
+          <div id="challengeProgressBar" class="progress-fill" style="width: 0%"></div>
+        </div>
+
+        <div class="day-rail" id="challengeRail">
+          {% for day, task in challenge_tasks.items() %}
+          <div class="day-chip" data-rail-day="{{ day }}">
+            <span class="day-chip-label">Day {{ day }}</span>
+            <span class="day-chip-state" data-rail-state>Pending</span>
+          </div>
+          {% endfor %}
+        </div>
+
+        <div class="challenge-toolbar">
+          <label for="challengeFilterSelect" class="field-label">Show</label>
+          <select id="challengeFilterSelect" class="select">
+            <option value="all">All days</option>
+            <option value="pending">Pending only</option>
+            <option value="completed">Completed only</option>
+          </select>
+        </div>
+
+        <div id="challengeList" class="challenge-list">
+          {% for day, task in challenge_tasks.items() %}
+          <article class="challenge-card" data-day="{{ day }}">
+            <div class="challenge-info">
+              <span class="day-pill">Day {{ day }}</span>
+              <h3 class="challenge-title">{{ task }}</h3>
+              <p class="challenge-tip">{{ challenge_tips.get(day, '') }}</p>
+            </div>
+            <button type="button" class="btn btn-secondary claim-btn" data-claim-day="{{ day }}">
+              Claim +{{ challenge_reward }}
+            </button>
+          </article>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="card badges-card" aria-label="Achievement badges">
+        <div class="card-head badges-head">
+          <div>
+            <h2 class="section-title">Achievement badges</h2>
+            <p class="sprint-desc">Certifications for household sorting precision.</p>
+          </div>
+          <div class="badge-filter">
+            <label for="badgeFilterSelect" class="field-label">Status</label>
+            <select id="badgeFilterSelect" class="select">
+              <option value="all">All badges</option>
+              <option value="unlocked">Unlocked</option>
+              <option value="locked">Locked</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="badgesGrid" class="badges-grid">
+          {% for badge_id, badge_name, badge_requirement in badges %}
+          <article class="badge-card" data-badge="{{ badge_id }}" data-status="locked">
+            <span class="badge-medal" aria-hidden="true">
+              <svg class="icon"><use href="#i-award"></use></svg>
+            </span>
+            <div class="badge-body">
+              <div class="badge-title-row">
+                <h3 class="badge-title">{{ badge_name }}</h3>
+                <span class="badge-status">Locked</span>
+              </div>
+              <p class="badge-desc">{{ badge_requirement }}</p>
+            </div>
+          </article>
+          {% endfor %}
+        </div>
+      </section>
+    </section>
+
+    <footer class="app-footer">
+      <div class="footer-left">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span>EcoSort citizen network</span>
+        <span class="footer-sep">·</span>
+        <span>Local-first</span>
+      </div>
+      <div class="footer-right">Flask + SQLite · AI vision optional</div>
+    </footer>
+  </div>
+
+  <nav class="mobile-nav" aria-label="EcoSort sections">
+    <button id="mobileTabScan" type="button" class="mobile-nav-btn is-active" aria-selected="true">
+      <svg class="icon" aria-hidden="true"><use href="#i-camera"></use></svg>
+      <span>Scan &amp; bin</span>
+    </button>
+    <button id="mobileTabBadges" type="button" class="mobile-nav-btn" aria-selected="false">
+      <svg class="icon" aria-hidden="true"><use href="#i-award"></use></svg>
+      <span>Badges &amp; 7-day</span>
+    </button>
+  </nav>
+
+  <canvas id="captureCanvas" class="hidden"></canvas>
+  <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+  <script type="application/json" id="domain-config">{{ domain_config | tojson }}</script>
+  <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+</body>
 </html>

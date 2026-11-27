@@ -19,8 +19,10 @@ free-text **community / group** and **city / region** (defaults:
 `General Community` and `Local Area`). The five group presets are suggestions,
 not a whitelist — type `My Flat 4B` and the standings will rank it.
 
-Two leaderboards are shown: **Top Eco Contributors** (every user, by points) and
-**Community & Group Standings** (points summed per group, with member counts).
+The Flask UI uses a forest, moss and sage layout with two tabs:
+**Scan & bin** and **Badges & 7-day** — the Flask screen intentionally has no
+leaderboard. The API still exposes `/api/leaderboard` for other clients, and
+the Flutter client can render the individual and community standings.
 
 ## 1. Preview it in your browser (fastest path)
 
@@ -33,31 +35,59 @@ python -m pip install -r requirements.txt   # Flask, Werkzeug, google-genai
 python app.py                                # -> http://127.0.0.1:5000
 ```
 
-The layout is a single column on mobile (verified to 320px with zero horizontal
-overflow) and a two-column scan panel up to the 900px desktop shell.
+The layout is a forest/moss/sage interface: a single column on mobile with a
+fixed bottom navigation bar (verified to 320px with zero horizontal overflow)
+and a two-column capture card above 768px inside a 960px desktop shell.
 
 Open **http://127.0.0.1:5000** and:
 
-1. Fill **Your profile**: display name, **Community / group** dropdown (pick a
-   preset or *Custom…* for free text), **City / region** dropdown (same), then
-   **Apply profile**. The header summarises the active profile and the live Eco
-   Score; **⚙ Settings** shows the scan engine (AI vision on/off, model) and the
-   active rate limits, and can reset the local profile.
-2. **Start camera** → allow the permission prompt → **Capture Photo**, or press
-   **Upload photo** / tap one of the six sample chips.
-3. Read the disposal guide, then **Toss into Virtual Bin**.
-4. In **Scan & Bin** you also have: a **quick-sample dropdown + Scan sample**
-   button next to the six preset chips, a **category-override dropdown** on the
-   result card (correct the stream before tossing — points are still derived
-   server-side for the chosen stream), and a camera **Switch camera** dropdown
-   that appears only when the browser reports more than one camera.
-5. **Badges & 7-Day** has a filter (*All / Pending only / Completed only*) above
-   the checklist. **Leaderboards** has a **View** dropdown (*All contributors* vs
-   *Community & group standings*) plus a **Community** filter.
+1. Fill **Eco-citizen**, choose a **Community hub** preset (or *Custom…*
+   for free text), choose a **City / region** preset (or *Other / custom city*),
+   then press **Apply**. The header shows the live Eco points balance and
+   engine status; **Settings** reports the scan engine (**AI Vision: on/off**,
+   model and provider), the active rate limits, falling-leaf motion,
+   auto-read guidance, the current profile, and a **Reset local profile** action.
+2. **Camera scan** → allow the permission prompt → **Capture frame**, or use
+   **Upload photo**, or choose a **Quick-pick sample items** entry from the
+   dropdown (choosing one scans it immediately) / tap one of the six chips.
+3. Read the sorting guide. The result card shows an **AI Vision** or
+   **Offline Rules** badge, a confidence band, numbered preparation steps, a
+   **Prep check** mini-checklist, the regional note, and a **Category override**
+   dropdown. Correct the stream if needed, then press **Toss into virtual bin**
+   — the server still derives the points for the chosen stream.
+   The card also has **Read aloud** and **Auto-read** controls. Auto-read is off
+   by default; it speaks only the item name, category/bin, and preparation
+   steps, never toasts, badges, challenge updates, the header, or profile text.
+   **Read aloud** cancels any current speech and reads the visible guide; the
+   same button becomes **Stop** while speaking.
+4. The five **virtual target bins** update from the server's `bin_counts`;
+   the **Recent sorting activity** strip keeps the latest session disposals.
+   Badges unlock from the server's `badges` payload.
+5. **Badges & 7-day** shows a sprint progress rail and filter
+   (*All days / Pending only / Completed only*). Claim each day once for **+15**
+   points; a second claim is disabled and the server returns `awarded: false`.
+   The badge grid has an *All / Unlocked / Locked* status filter.
 
-Camera needs a secure context: `http://127.0.0.1` and `http://localhost` count as
-secure, a LAN IP (`http://192.168.x.x`) does **not** — the UI tells you and falls
-back to upload/samples instead of failing silently.
+If the rate limiter answers **429**, the UI shows a friendly toast with the
+retry window instead of failing silently or double-submitting. Camera needs a
+secure context: `http://127.0.0.1` and `http://localhost` count as secure, a LAN
+IP (`http://192.168.x.x`) does **not** — the UI tells you and falls back to
+upload/samples instead of failing silently.
+
+### Preview on your phone (same Wi-Fi)
+
+```bash
+# macOS/Linux
+ECOSORT_HOST=0.0.0.0 python app.py
+# Windows PowerShell
+$env:ECOSORT_HOST="0.0.0.0"; python app.py
+```
+
+Find your computer's LAN IPv4 address (`ipconfig` on Windows, `ip addr` on
+Linux/macOS) and open `http://<LAN-IP>:5000` on the phone. The profile, upload,
+sample presets, bins, badges and challenge all work over plain HTTP. **Live
+camera needs HTTPS**, so on a LAN IP the app shows the friendly camera fallback
+and you use **Upload photo** / **Quick samples** instead.
 
 ### Flutter Web client, mobile viewport
 
