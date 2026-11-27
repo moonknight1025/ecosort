@@ -24,6 +24,33 @@ The Flask UI uses a forest, moss and sage layout with two tabs:
 leaderboard. The API still exposes `/api/leaderboard` for other clients, and
 the Flutter client can render the individual and community standings.
 
+## Live Demo (Cloudflare Pages)
+
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Cloudflare%20Pages-F38020?logo=cloudflare)](https://ecosort.pages.dev)
+
+**Static demo:** <https://ecosort.pages.dev>
+
+> Replace `ecosort` with your Cloudflare Pages project name after the first
+> deploy. The static build runs entirely in local demo mode: profile, scanning,
+> category override, bins, badges, recent activity and the 7-day challenge work
+> without a Python server. The full Flask app with SQLite, Gemini vision and
+> server-side idempotency still runs at **http://127.0.0.1:5000**.
+
+The Pages output is committed in `public/` with relative `./static/...` assets.
+Regenerate it after UI changes:
+
+```bash
+python scripts/build_pages.py
+npx wrangler pages deploy public --project-name ecosort
+```
+
+For the full backend locally:
+
+```bash
+python -m pip install -r requirements.txt
+python app.py        # http://127.0.0.1:5000
+```
+
 ## 1. Preview it in your browser (fastest path)
 
 **One URL: http://127.0.0.1:5000.** The Flask app is the single web interface;
@@ -245,6 +272,7 @@ cd tests/e2e && npm install
 node flow.mjs                     # full demo + voice + mobile/desktop layout, 35 checks
 node controls.mjs                 # control surface + 375/320 px overflow, 13 checks
 node camera.mjs                   # live camera, fallbacks, 429, 11 checks
+node static.mjs                   # committed public/ bundle, local demo mode, 7 checks
 ```
 
 `tests/e2e/controls.mjs` covers the control surface itself: profile dropdowns
@@ -282,11 +310,29 @@ Both use the same token-first matching rule (a keyword matches a whole token, or
 a substring only when it is at least 5 characters), which is what keeps the
 3-character `med` keyword from firing on `media_player.png`.
 
-## 6. Cloudflare preview (quick tunnel)
+## 6. Cloudflare Pages and full-stack preview
 
-Flask + SQLite is a stateful server, so it cannot be hosted as a static
-Cloudflare Pages site. For a public HTTPS preview, use a Cloudflare Tunnel
-against the local Flask process:
+### Static Pages build
+
+`public/` is a deployable Cloudflare Pages bundle. It uses local demo rules and
+browser storage when `/api/*` is unavailable, so the complete UI works without a
+Python server. Build and deploy:
+
+```bash
+python scripts/build_pages.py
+npx wrangler pages deploy public --project-name ecosort
+```
+
+`wrangler.toml` points Pages at `public/`. The generated `public/index.html`
+uses relative `./static/...` paths and sets `window.__ECOSORT_STATIC__ = true`;
+the shared frontend then skips API calls and uses its local classifier, points,
+badge and challenge state.
+
+### Full Flask app over Cloudflare Tunnel
+
+Flask + SQLite is stateful, so the Pages demo cannot run Gemini vision or
+server-side idempotency. For the full app, expose the local Flask process with a
+Cloudflare Tunnel:
 
 ```bash
 # install once (Windows)
@@ -300,9 +346,10 @@ Cloudflare prints a `https://<random>.trycloudflare.com` URL. That URL is
 HTTPS, so camera access works, and it forwards to the same Flask/SQLite
 process. A quick tunnel is temporary and stops when the process exits.
 
-For a permanent deployment, use a named Cloudflare Tunnel attached to your
-account and domain, or port the API to Cloudflare Workers + D1 (SQLite). The
-current SQLite file and Python Gemini SDK do not run directly on Workers.
+For a permanent full-stack deployment, use a named Cloudflare Tunnel attached
+to your account and domain, or port the API to Cloudflare Workers + D1
+(SQLite). The current SQLite file and Python Gemini SDK do not run directly on
+Workers.
 
 ## 7. Status
 
@@ -316,7 +363,8 @@ current SQLite file and Python Gemini SDK do not run directly on Workers.
 | Flutter Web client | done |
 | Camera capture + AI vision + rate limiting | done |
 | Universal profiles (community / group + city) | done |
-| Forest/moss/sage UI, voice guide, mobile nav, Cloudflare preview docs | done (this release) |
+| Forest/moss/sage UI, voice guide, mobile nav | done |
+| Static Cloudflare Pages bundle with local demo fallback | done (this release) |
 
 Still open: no `LICENSE` file (a Product Owner decision). No auth: any client can
 act as any user, and the leaderboard is not evidence of real behaviour. Group

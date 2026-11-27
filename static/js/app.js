@@ -12,6 +12,7 @@ const DOMAIN = JSON.parse(document.getElementById('domain-config').textContent);
 const PROFILE_KEY = 'ecosort.profile.v2';
 const LEGACY_PROFILE_KEY = 'ecosort.profile';
 const ACTIVITY_KEY = 'ecosort.activity.v1';
+const DEMO_STATE_KEY = 'ecosort.demo.v1';
 const CUSTOM = '__custom__';
 
 const el = {
@@ -112,6 +113,8 @@ const state = {
   busy: false,
   leavesEnabled: true,
   activity: [],
+  apiAvailable: !window.__ECOSORT_STATIC__,
+  demo: null,
 };
 
 const camera = {
@@ -130,6 +133,307 @@ const speech = {
   autoRead: false,
   primed: false,
 };
+
+/* ---------------- static / demo fallback ---------------- */
+
+const LOCAL_NOTE = 'Rules vary by municipality — check your local waste collection guidance.';
+
+const DEMO_CATALOG = {
+  bottle: {
+    item_name: 'Plastic Bottle',
+    category: 'Recyclable Waste',
+    bin_color: 'Blue',
+    points: 15,
+    instructions: 'Empty and rinse the bottle, crush it flat, cap it, then drop it in the blue recyclables bin.',
+    preparation_steps: [
+      'Empty and rinse the bottle.',
+      'Crush it flat and keep the cap on.',
+      'Place it in the blue recyclables bin.',
+    ],
+  },
+  banana: {
+    item_name: 'Banana Peel',
+    category: 'Wet Waste',
+    bin_color: 'Green',
+    points: 10,
+    instructions: 'Drop the peel into the green wet-waste bin, ideally loose rather than in a plastic bag.',
+    preparation_steps: [
+      'Remove any produce sticker.',
+      'Keep the peel loose, not bagged in plastic.',
+      'Place it in the green wet-waste bin.',
+    ],
+  },
+  battery: {
+    item_name: 'Alkaline or Li-ion Battery',
+    category: 'Hazardous Waste',
+    bin_color: 'Red',
+    points: 25,
+    instructions: 'Tape the terminals, keep it away from heat, and drop it in the red hazardous-waste bin.',
+    preparation_steps: [
+      'Tape both battery terminals.',
+      'Keep the battery away from heat and metal tools.',
+      'Place it in the red hazardous-waste bin.',
+    ],
+  },
+  box: {
+    item_name: 'Cardboard Box',
+    category: 'Recyclable Waste',
+    bin_color: 'Blue',
+    points: 15,
+    instructions: 'Remove tape and flatten the box so it stacks neatly in the blue recyclables bin.',
+    preparation_steps: [
+      'Remove tape and packing inserts.',
+      'Flatten the box completely.',
+      'Place it in the blue recyclables bin.',
+    ],
+  },
+  charger: {
+    item_name: 'Broken Charger or Cable',
+    category: 'E-Waste',
+    bin_color: 'Purple',
+    points: 20,
+    instructions: 'Coil the cable, bag it separately, and hand it to the purple e-waste bin.',
+    preparation_steps: [
+      'Unplug and coil the damaged cable.',
+      'Do not cut open the adapter casing.',
+      'Place it in the purple e-waste bin.',
+    ],
+  },
+  wrapper: {
+    item_name: 'Soiled Chip Bag',
+    category: 'Dry Waste',
+    bin_color: 'Gray',
+    points: 10,
+    instructions: 'Multi-layer wrappers cannot be recycled. Bag them and drop them in the gray dry-waste bin.',
+    preparation_steps: [
+      'Shake out any remaining crumbs.',
+      'Keep the wrapper out of the recycling stream.',
+      'Place it in the gray dry-waste bin.',
+    ],
+  },
+};
+
+const DEMO_ALIASES = {
+  plastic: 'bottle',
+  food: 'banana',
+  paper: 'box',
+  phone: 'charger',
+  med: 'battery',
+  medicine: 'battery',
+  tissue: 'wrapper',
+};
+
+const DEMO_POINTS = {
+  'Wet Waste': 10,
+  'Recyclable Waste': 15,
+  'Dry Waste': 10,
+  'E-Waste': 20,
+  'Hazardous Waste': 25,
+};
+
+function defaultDemoChallenges() {
+  return Array.from(document.querySelectorAll('[data-day]')).map((card) => ({
+    day_number: Number(card.dataset.day),
+    completed: card.classList.contains('completed'),
+  }));
+}
+
+function defaultDemoBadges() {
+  return DOMAIN.badges.map((badge) => ({ id: badge.id, unlocked: false }));
+}
+
+function defaultDemoState() {
+  return {
+    points: 0,
+    bins: Object.fromEntries(Object.keys(DOMAIN.bins).map((category) => [category, 0])),
+    badges: defaultDemoBadges(),
+    challenges: defaultDemoChallenges(),
+    usedTokens: [],
+  };
+}
+
+function loadDemoState() {
+  try {
+    const raw = localStorage.getItem(DEMO_STATE_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    const base = defaultDemoState();
+    if (!parsed || typeof parsed !== 'object') {
+      return base;
+    }
+    return {
+      ...base,
+      ...parsed,
+      bins: { ...base.bins, ...(parsed.bins || {}) },
+      badges: Array.isArray(parsed.badges) && parsed.badges.length ? parsed.badges : base.badges,
+      challenges: Array.isArray(parsed.challenges) && parsed.challenges.length
+        ? parsed.challenges
+        : base.challenges,
+      usedTokens: Array.isArray(parsed.usedTokens) ? parsed.usedTokens : [],
+    };
+  } catch {
+    return defaultDemoState();
+  }
+}
+
+function saveDemoState() {
+  if (!state.demo) {
+    return;
+  }
+  try {
+    localStorage.setItem(DEMO_STATE_KEY, JSON.stringify(state.demo));
+  } catch {
+    /* private browsing can reject storage; the in-memory state still works */
+  }
+}
+
+function evaluateDemoBadges(demo) {
+  const total = Object.values(demo.bins).reduce((sum, count) => sum + Number(count || 0), 0);
+  const recyclable = Number(demo.bins['Recyclable Waste'] || 0) + Number(demo.bins['Dry Waste'] || 0);
+  const hazardous = Number(demo.bins['E-Waste'] || 0) + Number(demo.bins['Hazardous Waste'] || 0);
+  const unlocked = new Set(
+    demo.badges.filter((badge) => badge.unlocked).map((badge) => badge.id),
+  );
+  if (total >= 1) unlocked.add('first_step');
+  if (recyclable >= 3) unlocked.add('plastic_warrior');
+  if (hazardous >= 1) unlocked.add('hazard_hero');
+  if (demo.points >= 100) unlocked.add('green_champion');
+  return DOMAIN.badges.map((badge) => ({ id: badge.id, unlocked: unlocked.has(badge.id) }));
+}
+
+function applyLocalState() {
+  if (!state.profile || !state.demo) {
+    return;
+  }
+  state.profile.eco_points = state.demo.points;
+  localStorage.setItem(PROFILE_KEY, JSON.stringify(state.profile));
+  renderPoints(state.demo.points);
+  renderBins(state.demo.bins);
+  renderBadges(state.demo.badges);
+  renderChallenges(state.demo.challenges);
+}
+
+function applyLocalProfile(profile) {
+  state.profile = {
+    id: 'local',
+    username: profile.username,
+    group_name: profile.group_name,
+    city: profile.city,
+    eco_points: state.demo ? state.demo.points : 0,
+  };
+  saveProfile(state.profile);
+  applyLocalState();
+}
+
+function localResult(keyword) {
+  const normalized = String(keyword || '').toLowerCase();
+  let key = Object.keys(DEMO_CATALOG).find((candidate) => normalized.includes(candidate));
+  if (!key) {
+    const alias = Object.keys(DEMO_ALIASES).find((candidate) => normalized.includes(candidate));
+    if (alias) key = DEMO_ALIASES[alias];
+  }
+  const base = key ? DEMO_CATALOG[key] : {
+    item_name: 'Unrecognized item',
+    category: 'Dry Waste',
+    bin_color: 'Gray',
+    points: 10,
+    instructions: 'Bag the item securely and place it in the gray dry-waste bin.',
+    preparation_steps: [
+      'Bag the item securely.',
+      'Place it in the gray dry-waste bin.',
+    ],
+  };
+  return {
+    ...base,
+    display_name: base.item_name,
+    analysis_mode: 'offline_fallback',
+    source: 'offline_fallback',
+    confidence: null,
+    vision_available: false,
+    fallback: !key,
+    local_note: LOCAL_NOTE,
+  };
+}
+
+function localIdentify(form) {
+  const keyword = form.get('preset_keyword') || '';
+  const image = form.get('image');
+  const filename = image && image.name ? image.name : '';
+  return localResult(keyword || filename);
+}
+
+function localDispose(category, itemName, token) {
+  const demo = state.demo;
+  if (demo.usedTokens.includes(token)) {
+    return {
+      new_points: demo.points,
+      bin_counts: demo.bins,
+      badges: demo.badges,
+      logged: {
+        item_name: itemName,
+        category,
+        bin_color: DOMAIN.bins[category] ? DOMAIN.bins[category].bin_color : 'Gray',
+        points: 0,
+      },
+      duplicate: true,
+    };
+  }
+
+  const points = DEMO_POINTS[category] || 10;
+  demo.usedTokens = [...demo.usedTokens.slice(-40), token];
+  demo.points += points;
+  demo.bins[category] = Number(demo.bins[category] || 0) + 1;
+  demo.badges = evaluateDemoBadges(demo);
+  saveDemoState();
+  return {
+    new_points: demo.points,
+    bin_counts: demo.bins,
+    badges: demo.badges,
+    logged: {
+      item_name: itemName,
+      category,
+      bin_color: DOMAIN.bins[category] ? DOMAIN.bins[category].bin_color : 'Gray',
+      points,
+    },
+    duplicate: false,
+  };
+}
+
+function localClaimDay(day) {
+  const demo = state.demo;
+  const challenge = demo.challenges.find((item) => Number(item.day_number) === Number(day));
+  if (!challenge || challenge.completed) {
+    return {
+      new_points: demo.points,
+      challenges: demo.challenges,
+      awarded: false,
+      awarded_points: 0,
+    };
+  }
+  challenge.completed = true;
+  demo.points += DOMAIN.challengeReward;
+  demo.badges = evaluateDemoBadges(demo);
+  saveDemoState();
+  return {
+    new_points: demo.points,
+    challenges: demo.challenges,
+    awarded: true,
+    awarded_points: DOMAIN.challengeReward,
+  };
+}
+
+function isApiUnavailable(error) {
+  return !error
+    || error.name === 'TypeError'
+    || error.status === 404
+    || error.status === 405
+    || error.status >= 500;
+}
+
+function markDemoMode() {
+  state.apiAvailable = false;
+  if (el.networkLabel) el.networkLabel.textContent = 'Local demo';
+  if (el.visionStatusShort) el.visionStatusShort.textContent = 'demo';
+}
 
 /* ---------------- utilities ---------------- */
 
@@ -490,6 +794,20 @@ function applyUserPayload(payload) {
   renderBins(payload.bin_counts);
   renderBadges(payload.badges);
   renderChallenges(payload.challenges);
+
+  if (state.demo) {
+    state.demo.points = payload.user.eco_points;
+    if (payload.bin_counts) {
+      state.demo.bins = { ...state.demo.bins, ...payload.bin_counts };
+    }
+    if (Array.isArray(payload.badges)) {
+      state.demo.badges = payload.badges;
+    }
+    if (Array.isArray(payload.challenges)) {
+      state.demo.challenges = payload.challenges;
+    }
+    saveDemoState();
+  }
 }
 
 async function applyProfile({ silent = false } = {}) {
@@ -504,6 +822,14 @@ async function applyProfile({ silent = false } = {}) {
   const city = resolveSelect(el.citySelect, el.customCityInput)
     || el.citySelect.options[0].value;
 
+  if (!state.apiAvailable) {
+    applyLocalProfile({ username, group_name: groupName, city });
+    if (!silent) {
+      toast(`Profile saved in local demo mode: ${username}`);
+    }
+    return;
+  }
+
   setBusy(el.applyProfileBtn, true);
   try {
     const payload = await postJson('/api/user', {
@@ -511,12 +837,21 @@ async function applyProfile({ silent = false } = {}) {
       group_name: groupName,
       city,
     });
+    state.apiAvailable = true;
     applyUserPayload(payload);
     if (!silent) {
       toast(`Profile applied: ${payload.user.username}`);
     }
   } catch (error) {
-    toast(friendlyError(error), true);
+    if (isApiUnavailable(error)) {
+      markDemoMode();
+      applyLocalProfile({ username, group_name: groupName, city });
+      if (!silent) {
+        toast(`Profile saved in local demo mode: ${username}`);
+      }
+    } else {
+      toast(friendlyError(error), true);
+    }
   } finally {
     setBusy(el.applyProfileBtn, false);
   }
@@ -526,15 +861,25 @@ async function hydrateProfile() {
   if (!state.profile) {
     return;
   }
+  if (!state.apiAvailable) {
+    applyLocalState();
+    return;
+  }
   try {
     const payload = await postJson('/api/user', {
       username: state.profile.username,
       group_name: state.profile.group_name,
       city: state.profile.city,
     });
+    state.apiAvailable = true;
     applyUserPayload(payload);
   } catch (error) {
-    toast(`Could not refresh your server profile. ${friendlyError(error)}`, true);
+    if (isApiUnavailable(error)) {
+      markDemoMode();
+      applyLocalState();
+    } else {
+      toast(`Could not refresh your server profile. ${friendlyError(error)}`, true);
+    }
   }
 }
 
@@ -578,7 +923,10 @@ function resetLocalProfile() {
     }
   });
   localStorage.removeItem(ACTIVITY_KEY);
+  localStorage.removeItem(DEMO_STATE_KEY);
   state.activity = [];
+  state.demo = defaultDemoState();
+  saveDemoState();
   renderRecentActivity();
   setActiveBin(null);
   renderChallengeProgress();
@@ -593,9 +941,16 @@ function resetLocalProfile() {
 /* ---------------- capabilities ---------------- */
 
 async function loadCapabilities() {
+  if (window.__ECOSORT_STATIC__) {
+    markDemoMode();
+    el.visionStatus.textContent = 'Local demo mode — offline sorting rules';
+    el.limitsStatus.textContent = 'Static Cloudflare Pages build: no server API';
+    return;
+  }
   try {
     const payload = await callApi('/api/capabilities');
     state.capabilities = payload;
+    state.apiAvailable = true;
     const vision = payload.ai_vision || {};
     if (vision.enabled) {
       el.visionStatus.innerHTML = `AI Vision: <strong>on</strong> · ${escapeHtml(
@@ -613,8 +968,14 @@ async function loadCapabilities() {
       ? `Rate limits/min — scan ${limits.identify}, AI ${limits.ai_vision}, writes ${limits.general}`
       : 'Rate limiting is disabled on this server.';
   } catch (error) {
-    el.visionStatus.textContent = 'Scan engine status unavailable.';
-    el.limitsStatus.textContent = friendlyError(error);
+    if (isApiUnavailable(error)) {
+      markDemoMode();
+      el.visionStatus.textContent = 'Local demo mode — offline sorting rules';
+      el.limitsStatus.textContent = 'Server API unavailable; using local rules';
+    } else {
+      el.visionStatus.textContent = 'Scan engine status unavailable.';
+      el.limitsStatus.textContent = friendlyError(error);
+    }
   }
 }
 
@@ -1140,7 +1501,21 @@ async function identifyRequest(buildForm, label) {
   });
   setBusy(el.samplePresetSelect, true);
   try {
-    const result = await postForm('/api/identify', buildForm());
+    const form = buildForm();
+    let result;
+    if (state.apiAvailable) {
+      try {
+        result = await postForm('/api/identify', form);
+      } catch (error) {
+        if (!isApiUnavailable(error)) {
+          throw error;
+        }
+        markDemoMode();
+        result = localIdentify(form);
+      }
+    } else {
+      result = localIdentify(form);
+    }
     renderResult(result);
     const isAi = (result.analysis_mode || result.source) === 'ai_vision';
     const provenance = isAi ? 'AI vision' : 'offline rules';
@@ -1179,7 +1554,7 @@ async function dispose() {
   if (state.busy) {
     return;
   }
-  if (!state.profile || typeof state.profile.id !== 'number') {
+  if (!state.profile || (typeof state.profile.id !== 'number' && state.profile.id !== 'local')) {
     toast('Apply a profile first.', true);
     return;
   }
@@ -1190,15 +1565,29 @@ async function dispose() {
 
   const category = el.binOverrideSelect.value || state.result.category;
   const token = state.disposeToken || newClientToken();
+  const itemName = state.result.item_name || state.result.display_name || 'Item';
   state.busy = true;
   setBusy(el.tossToBinBtn, true);
   try {
-    const payload = await postJson('/api/dispose', {
-      user_id: state.profile.id,
-      item_name: state.result.item_name || state.result.display_name,
-      category_override: category,
-      client_token: token,
-    });
+    let payload;
+    if (state.apiAvailable) {
+      try {
+        payload = await postJson('/api/dispose', {
+          user_id: state.profile.id,
+          item_name: itemName,
+          category_override: category,
+          client_token: token,
+        });
+      } catch (error) {
+        if (!isApiUnavailable(error)) {
+          throw error;
+        }
+        markDemoMode();
+        payload = localDispose(category, itemName, token);
+      }
+    } else {
+      payload = localDispose(category, itemName, token);
+    }
     state.disposeToken = null;
     state.profile.eco_points = payload.new_points;
     localStorage.setItem(PROFILE_KEY, JSON.stringify(state.profile));
@@ -1236,7 +1625,7 @@ async function claimDay(day, button) {
   if (state.busy) {
     return;
   }
-  if (!state.profile || typeof state.profile.id !== 'number') {
+  if (!state.profile || (typeof state.profile.id !== 'number' && state.profile.id !== 'local')) {
     toast('Apply a profile first.', true);
     return;
   }
@@ -1244,10 +1633,23 @@ async function claimDay(day, button) {
   state.busy = true;
   setBusy(button, true);
   try {
-    const payload = await postJson('/api/challenge/complete', {
-      user_id: state.profile.id,
-      day_number: day,
-    });
+    let payload;
+    if (state.apiAvailable) {
+      try {
+        payload = await postJson('/api/challenge/complete', {
+          user_id: state.profile.id,
+          day_number: day,
+        });
+      } catch (error) {
+        if (!isApiUnavailable(error)) {
+          throw error;
+        }
+        markDemoMode();
+        payload = localClaimDay(day);
+      }
+    } else {
+      payload = localClaimDay(day);
+    }
     state.profile.eco_points = payload.new_points;
     localStorage.setItem(PROFILE_KEY, JSON.stringify(state.profile));
     renderPoints(payload.new_points);
@@ -1545,6 +1947,7 @@ async function init() {
   wireEvents();
   initSpeech();
   initLeaves();
+  state.demo = loadDemoState();
   loadActivity();
   renderRecentActivity();
   syncCustomProfileFields();
