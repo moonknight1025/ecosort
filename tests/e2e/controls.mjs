@@ -3,8 +3,8 @@
  *
  * Verifies the real controls, not just the flow: profile dropdowns (presets +
  * custom), the settings popover, the sample dropdown, the category-override
- * correction, the challenge filter, the leaderboard scope/filter, and no
- * horizontal overflow at 375 and 320 px.
+ * correction, the challenge filter, and no horizontal overflow at 375 and
+ * 320 px. The AI Studio layout intentionally has no leaderboard.
  *
  *   python app.py &
  *   cd tests/e2e && npm install
@@ -12,8 +12,9 @@
  */
 
 import { chromium } from 'playwright-core';
-const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+const CHROME = process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const BASE = 'http://127.0.0.1:5000/';
+const USER = `ControlTester-${Date.now().toString(36)}`;
 const r = [];
 const errs = [];
 const check = (n, ok, d) => { r.push(ok); console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${n}${d ? ' — ' + d : ''}`); };
@@ -26,97 +27,84 @@ await page.goto(BASE, { waitUntil: 'networkidle' });
 
 // --- dropdowns exist and are real <select> controls ---
 const controls = await page.evaluate(() => ({
-  group: !!document.querySelector('select#group-select'),
-  city: !!document.querySelector('select#city-select'),
-  sample: !!document.querySelector('select#sample-select'),
-  override: !!document.querySelector('select#category-override'),
-  challenge: !!document.querySelector('select#challenge-filter'),
-  scope: !!document.querySelector('select#rank-scope'),
-  settings: !!document.querySelector('details#settings'),
-  groupOptions: document.querySelectorAll('#group-select option').length,
+  community: !!document.querySelector('select#communitySelect'),
+  city: !!document.querySelector('select#citySelect'),
+  sample: !!document.querySelector('select#samplePresetSelect'),
+  override: !!document.querySelector('select#binOverrideSelect'),
+  challenge: !!document.querySelector('select#challengeFilterSelect'),
+  settings: !!document.getElementById('settingsToggleBtn'),
+  groupOptions: document.querySelectorAll('#communitySelect option').length,
 }));
 check('profile + scan + result + filter dropdowns are real <select>s',
-  controls.group && controls.city && controls.sample && controls.override &&
-  controls.challenge && controls.scope && controls.settings,
+  controls.community && controls.city && controls.sample && controls.override &&
+  controls.challenge && controls.settings,
   `group options: ${controls.groupOptions}`);
 check('group select offers presets plus a custom option', controls.groupOptions >= 6);
 
 // --- custom group reveals the text field and is sent ---
-await page.fill('#username', 'ControlTester');
-await page.selectOption('#group-select', '__custom__');
-const customVisible = await page.isVisible('#group-custom-field');
-await page.fill('#group-custom', 'My Flat 4B');
-await page.selectOption('#city-select', '__custom__');
-await page.fill('#city-custom', 'Kochi');
-await page.click('#set-profile');
-await page.waitForFunction(() => /My Flat 4B/.test(document.getElementById('profile-summary').textContent), null, { timeout: 6000 });
-const summary = await page.textContent('#profile-summary');
+await page.fill('#displayNameInput', USER);
+await page.selectOption('#communitySelect', '__custom__');
+const customVisible = await page.isVisible('#customCommunityField');
+await page.fill('#customCommunityInput', 'My Flat 4B');
+await page.selectOption('#citySelect', '__custom__');
+await page.fill('#customCityInput', 'Kochi');
+await page.click('#profileForm button[type="submit"]');
+await page.waitForFunction(() => /My Flat 4B/.test(document.getElementById('profileStatus').textContent), null, { timeout: 6000 });
+const summary = await page.textContent('#profileStatus');
 check('custom community + city apply and are summarised',
   customVisible && summary.includes('My Flat 4B') && summary.includes('Kochi'), summary.trim());
 
 // --- settings popover shows engine status ---
-await page.click('#settings > summary');
-await page.waitForFunction(() => !/Checking/.test(document.getElementById('vision-status').textContent), null, { timeout: 6000 });
+await page.click('#settingsToggleBtn');
+await page.waitForFunction(() => !/Checking/.test(document.getElementById('visionStatus').textContent), null, { timeout: 6000 });
 const settings = await page.evaluate(() => ({
-  vision: document.getElementById('vision-status').textContent.trim(),
-  limits: document.getElementById('limits-status').textContent.trim(),
-  profile: document.getElementById('profile-status').textContent.trim(),
+  vision: document.getElementById('visionStatus').textContent.trim(),
+  limits: document.getElementById('limitsStatus').textContent.trim(),
+  profile: document.getElementById('profileStatus').textContent.trim(),
 }));
-check('settings popover reports the scan engine', /AI vision (on|off)/.test(settings.vision), settings.vision.slice(0, 60));
-check('settings popover reports rate limits', /Limits\/min|disabled/.test(settings.limits), settings.limits.slice(0, 60));
+check('settings popover reports the scan engine', /AI Vision: (on|off)/.test(settings.vision), settings.vision.slice(0, 70));
+check('settings popover reports rate limits', /Rate limits\/min|disabled/.test(settings.limits), settings.limits.slice(0, 70));
 check('settings popover shows the active profile', settings.profile.includes('ControlTester'));
-await page.click('#settings > summary');
+await page.click('#settingsToggleBtn');
 
 // --- sample dropdown drives a scan ---
-await page.selectOption('#sample-select', 'battery');
-await page.click('#use-sample');
-await page.waitForSelector('#result-card:not([hidden])', { timeout: 15000 });
+await page.selectOption('#samplePresetSelect', 'battery');
+await page.waitForSelector('#resultActiveState:not(.hidden)', { timeout: 15000 });
 const result = await page.evaluate(() => ({
-  name: document.getElementById('result-name').textContent.trim(),
-  cat: document.getElementById('result-category').textContent.trim(),
-  source: document.getElementById('result-source').textContent.trim(),
-  points: document.getElementById('result-points').textContent.trim(),
+  name: document.getElementById('resultItemName').textContent.trim(),
+  category: document.getElementById('binOverrideSelect').value,
+  mode: document.getElementById('resultModePill').textContent.trim(),
+  points: document.getElementById('resultRewardPill').textContent.trim(),
 }));
-check('sample dropdown identifies an item', result.cat === 'Hazardous Waste', `${result.name} / ${result.points}`);
-check('result shows the mode badge', /Offline rules|AI Vision/.test(result.source), result.source);
+check('sample dropdown identifies an item', result.category === 'Hazardous Waste', `${result.name} / ${result.points}`);
+check('result shows the mode badge', /Offline Rules|AI Vision/.test(result.mode), result.mode);
 
 // --- category override changes the stream the server records ---
-await page.selectOption('#category-override', 'Recyclable Waste');
-const hintVisible = await page.isVisible('#override-hint');
-await page.click('#dispose-btn');
-await page.waitForFunction(() => document.getElementById('eco-score').textContent === '15', null, { timeout: 10000 });
+await page.selectOption('#binOverrideSelect', 'Recyclable Waste');
+const tag = await page.textContent('#selectedBinTag');
+await page.click('#tossToBinBtn');
+await page.waitForFunction(() =>
+  document.getElementById('ecoPointsValue').textContent.trim() === '15', null, { timeout: 10000 });
 const afterOverride = await page.evaluate(() => ({
-  score: document.getElementById('eco-score').textContent,
-  recyclable: document.querySelector('[data-count-for="Recyclable Waste"]').textContent,
-  hazardous: document.querySelector('[data-count-for="Hazardous Waste"]').textContent,
-  toast: document.getElementById('toast').textContent.trim(),
+  score: document.getElementById('ecoPointsValue').textContent.trim(),
+  recyclable: document.querySelector('[data-bin-count="Recyclable Waste"]').textContent.trim(),
+  hazardous: document.querySelector('[data-bin-count="Hazardous Waste"]').textContent.trim(),
+  toast: document.getElementById('toastRegion').textContent.trim(),
 }));
 check('category override is honoured (recyclable bin, 15 pts, not hazardous)',
-  hintVisible && afterOverride.recyclable === '1' && afterOverride.hazardous === '0' && afterOverride.score === '15',
+  /Recyclable Waste/.test(tag) && afterOverride.recyclable === '1' && afterOverride.hazardous === '0' && afterOverride.score === '15',
   `recyclable=${afterOverride.recyclable} hazardous=${afterOverride.hazardous} toast="${afterOverride.toast}"`);
 
 // --- challenge filter ---
-await page.click('#tab-btn-badges');
-await page.selectOption('#challenge-filter', 'completed');
+await page.click('#mobileTabBadges');
+await page.selectOption('#challengeFilterSelect', 'completed');
 const completedOnly = await page.evaluate(() =>
-  Array.from(document.querySelectorAll('.challenge')).filter((c) => !c.hidden).length);
-await page.selectOption('#challenge-filter', 'pending');
+  Array.from(document.querySelectorAll('.challenge-card')).filter((c) => !c.classList.contains('hidden')).length);
+await page.selectOption('#challengeFilterSelect', 'pending');
 const pendingOnly = await page.evaluate(() =>
-  Array.from(document.querySelectorAll('.challenge')).filter((c) => !c.hidden).length);
+  Array.from(document.querySelectorAll('.challenge-card')).filter((c) => !c.classList.contains('hidden')).length);
 check('challenge filter switches pending/completed', completedOnly === 0 && pendingOnly === 7,
   `completed=${completedOnly} pending=${pendingOnly}`);
-
-// --- leaderboard scope + community filter ---
-await page.click('#tab-btn-rank');
-await page.waitForTimeout(600);
-const contributors = await page.isVisible('#user-rank');
-await page.selectOption('#rank-scope', 'groups');
-await page.waitForTimeout(300);
-const groupsVisible = await page.isVisible('#group-rank');
-const filterVisible = await page.isVisible('#rank-filter-field');
-const options = await page.evaluate(() => document.querySelectorAll('#rank-filter option').length);
-check('scope select swaps contributors <-> groups', contributors && groupsVisible && filterVisible,
-  `${options} community options`);
 
 // --- no overflow at 375 and 320 ---
 for (const width of [375, 320]) {

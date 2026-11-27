@@ -1,129 +1,166 @@
 /**
- * EcoSort frontend.
+ * EcoSort frontend — the single Flask-served app.
  *
- * One page, three panels. All rendering is driven by server responses; the client
- * never computes points, badges or bin totals itself.
- *
- * Scan paths: live camera (getUserMedia) -> canvas -> JPEG bytes; file upload;
- * or a quick sample (no image, rules only). Every path posts multipart `image`
- * and/or `preset_keyword` to /api/identify, and the card shows which engine
- * answered (`analysis_mode`).
+ * The UI is the refined green AI Studio layout. Every score, badge, bin count
+ * and challenge state comes from the Flask API; the browser never invents
+ * points. Camera frames, uploads and sample presets all post to
+ * /api/identify, and /api/dispose is protected by a per-scan client_token so a
+ * retried toss cannot double-credit.
  */
 
 const DOMAIN = JSON.parse(document.getElementById('domain-config').textContent);
-const PROFILE_KEY = 'ecosort.profile';
+const PROFILE_KEY = 'ecosort.profile.v2';
+const LEGACY_PROFILE_KEY = 'ecosort.profile';
+const ACTIVITY_KEY = 'ecosort.activity.v1';
 const CUSTOM = '__custom__';
 
 const el = {
   // header / settings
-  ecoScore: document.getElementById('eco-score'),
-  settings: document.getElementById('settings'),
-  visionStatus: document.getElementById('vision-status'),
-  limitsStatus: document.getElementById('limits-status'),
-  profileStatus: document.getElementById('profile-status'),
-  resetProfile: document.getElementById('reset-profile'),
+  ecoPointsPill: document.getElementById('ecoPointsPill'),
+  ecoPointsValue: document.getElementById('ecoPointsValue'),
+  settingsToggleBtn: document.getElementById('settingsToggleBtn'),
+  settingsPopover: document.getElementById('settingsPopover'),
+  visionStatus: document.getElementById('visionStatus'),
+  visionStatusShort: document.getElementById('visionStatusShort'),
+  limitsStatus: document.getElementById('limitsStatus'),
+  networkLabel: document.getElementById('networkLabel'),
+  settingsLeaves: document.getElementById('settingsLeaves'),
+  settingsAutoRead: document.getElementById('settingsAutoRead'),
+  profileStatus: document.getElementById('profileStatus'),
+  resetProfileBtn: document.getElementById('resetProfileBtn'),
 
   // profile
-  username: document.getElementById('username'),
-  groupSelect: document.getElementById('group-select'),
-  groupCustom: document.getElementById('group-custom'),
-  groupCustomField: document.getElementById('group-custom-field'),
-  citySelect: document.getElementById('city-select'),
-  cityCustom: document.getElementById('city-custom'),
-  cityCustomField: document.getElementById('city-custom-field'),
-  setProfile: document.getElementById('set-profile'),
-  profileSummary: document.getElementById('profile-summary'),
+  profileForm: document.getElementById('profileForm'),
+  applyProfileBtn: document.querySelector('#profileForm button[type="submit"]'),
+  displayNameInput: document.getElementById('displayNameInput'),
+  communitySelect: document.getElementById('communitySelect'),
+  citySelect: document.getElementById('citySelect'),
+  customProfileWrap: document.getElementById('customProfileWrap'),
+  customCommunityField: document.getElementById('customCommunityField'),
+  customCommunityInput: document.getElementById('customCommunityInput'),
+  customCityField: document.getElementById('customCityField'),
+  customCityInput: document.getElementById('customCityInput'),
 
   // tabs
-  tabs: Array.from(document.querySelectorAll('.tab')),
-  panels: Array.from(document.querySelectorAll('.panel')),
+  tabBtnScan: document.getElementById('tabBtnScan'),
+  tabBtnBadges: document.getElementById('tabBtnBadges'),
+  mobileTabScan: document.getElementById('mobileTabScan'),
+  mobileTabBadges: document.getElementById('mobileTabBadges'),
+  panelScan: document.getElementById('panelScan'),
+  panelBadges: document.getElementById('panelBadges'),
 
   // camera
-  dropzone: document.getElementById('dropzone'),
-  video: document.getElementById('camera-video'),
-  preview: document.getElementById('capture-preview'),
-  placeholder: document.getElementById('camera-placeholder'),
-  startCamera: document.getElementById('start-camera'),
-  capturePhoto: document.getElementById('capture-photo'),
-  switchCamera: document.getElementById('switch-camera'),
-  retake: document.getElementById('retake'),
-  stopCamera: document.getElementById('stop-camera'),
-  cameraStatus: document.getElementById('camera-status'),
+  cameraPlaceholder: document.getElementById('cameraPlaceholder'),
+  cameraVideo: document.getElementById('cameraVideo'),
+  imagePreview: document.getElementById('imagePreview'),
+  cameraFallbackBox: document.getElementById('cameraFallbackBox'),
+  cameraFallbackMsg: document.getElementById('cameraFallbackMsg'),
+  startCameraBtn: document.getElementById('startCameraBtn'),
+  capturePhotoBtn: document.getElementById('capturePhotoBtn'),
+  stopCameraBtn: document.getElementById('stopCameraBtn'),
+  cameraSwitchWrap: document.getElementById('cameraSwitchWrap'),
+  cameraDeviceSelect: document.getElementById('cameraDeviceSelect'),
+  photoUploadInput: document.getElementById('photoUploadInput'),
+  clearScanBtn: document.getElementById('clearScanBtn'),
+  captureCanvas: document.getElementById('captureCanvas'),
+  leafCanvas: document.getElementById('leafCanvas'),
 
   // upload / samples
-  imageInput: document.getElementById('image-input'),
-  sampleSelect: document.getElementById('sample-select'),
-  useSample: document.getElementById('use-sample'),
-  presets: Array.from(document.querySelectorAll('.preset')),
+  samplePresetSelect: document.getElementById('samplePresetSelect'),
+  presetChips: Array.from(document.querySelectorAll('.preset-chip')),
 
   // result
-  resultCard: document.getElementById('result-card'),
-  resultCategory: document.getElementById('result-category'),
-  resultPoints: document.getElementById('result-points'),
-  resultSource: document.getElementById('result-source'),
-  resultName: document.getElementById('result-name'),
-  resultInstructions: document.getElementById('result-instructions'),
-  resultAnalysis: document.getElementById('result-analysis'),
-  resultConfidence: document.getElementById('result-confidence'),
-  resultSteps: document.getElementById('result-steps'),
-  resultWhy: document.getElementById('result-why'),
-  resultNote: document.getElementById('result-note'),
-  resultLocalNote: document.getElementById('result-local-note'),
-  categoryOverride: document.getElementById('category-override'),
-  overrideHint: document.getElementById('override-hint'),
-  disposeBtn: document.getElementById('dispose-btn'),
-  bins: document.getElementById('bins'),
+  resultEmptyState: document.getElementById('resultEmptyState'),
+  resultActiveState: document.getElementById('resultActiveState'),
+  resultItemName: document.getElementById('resultItemName'),
+  resultRewardPill: document.getElementById('resultRewardPill'),
+  resultCategoryBadge: document.getElementById('resultCategoryBadge'),
+  resultBinBadge: document.getElementById('resultBinBadge'),
+  resultModePill: document.getElementById('resultModePill'),
+  resultConfidencePill: document.getElementById('resultConfidencePill'),
+  readAloudBtn: document.getElementById('readAloudBtn'),
+  readAloudLabel: document.getElementById('readAloudLabel'),
+  autoReadBtn: document.getElementById('autoReadBtn'),
+  resultVisionNote: document.getElementById('resultVisionNote'),
+  resultStepsList: document.getElementById('resultStepsList'),
+  resultLocalNote: document.getElementById('resultLocalNote'),
+  prepChecklist: document.getElementById('prepChecklist'),
+  prepCheckStatus: document.getElementById('prepCheckStatus'),
+  binOverrideSelect: document.getElementById('binOverrideSelect'),
+  selectedBinTag: document.getElementById('selectedBinTag'),
+  tossToBinBtn: document.getElementById('tossToBinBtn'),
+  recentActivityList: document.getElementById('recentActivityList'),
 
   // badges / challenges
-  challengeFilter: document.getElementById('challenge-filter'),
-  challenges: document.getElementById('challenges'),
-  claims: Array.from(document.querySelectorAll('[data-claim-day]')),
+  badgesGrid: document.getElementById('badgesGrid'),
+  badgeFilterSelect: document.getElementById('badgeFilterSelect'),
+  challengeFilterSelect: document.getElementById('challengeFilterSelect'),
+  challengeList: document.getElementById('challengeList'),
+  challengeProgressText: document.getElementById('challengeProgressText'),
+  challengeProgressPercent: document.getElementById('challengeProgressPercent'),
+  challengeProgressBar: document.getElementById('challengeProgressBar'),
+  challengeRail: document.getElementById('challengeRail'),
 
-  // leaderboards
-  rankScope: document.getElementById('rank-scope'),
-  rankFilterField: document.getElementById('rank-filter-field'),
-  rankFilter: document.getElementById('rank-filter'),
-  userRank: document.getElementById('user-rank'),
-  groupRank: document.getElementById('group-rank'),
-
-  toast: document.getElementById('toast'),
+  toastRegion: document.getElementById('toastRegion'),
 };
 
 const state = {
   profile: null,
   result: null,
-  leadership: { users: [], groups: [] },
+  disposeToken: null,
+  capabilities: null,
   busy: false,
+  leavesEnabled: true,
+  activity: [],
 };
 
 const camera = {
   stream: null,
   devices: [],
   deviceId: null,
-  canSwitch: false,
   previewUrl: null,
 };
 
-let toastTimer = null;
+const speech = {
+  supported: typeof window !== 'undefined'
+    && 'speechSynthesis' in window
+    && typeof window.SpeechSynthesisUtterance === 'function',
+  utterance: null,
+  speaking: false,
+  autoRead: false,
+  primed: false,
+};
 
 /* ---------------- utilities ---------------- */
 
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[char]);
+}
+
 function toast(message, isError = false) {
-  const text = String(message || '').slice(0, 220);
-  if (!text) {
+  const text = String(message || '').slice(0, 260);
+  if (!text || !el.toastRegion) {
     return;
   }
-  el.toast.textContent = text;
-  el.toast.classList.toggle('is-error', Boolean(isError));
-  el.toast.hidden = false;
-  requestAnimationFrame(() => el.toast.classList.add('is-visible'));
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => {
-    el.toast.classList.remove('is-visible');
-    setTimeout(() => {
-      el.toast.hidden = true;
-    }, 200);
-  }, 3200);
+  while (el.toastRegion.children.length >= 1) {
+    el.toastRegion.firstElementChild.remove();
+  }
+  const node = document.createElement('div');
+  node.className = `toast${isError ? ' is-error' : ''}`;
+  node.textContent = text;
+  el.toastRegion.appendChild(node);
+  setTimeout(() => {
+    node.style.opacity = '0';
+    node.style.transform = 'translateY(8px)';
+    node.style.transition = 'opacity 0.22s ease, transform 0.22s ease';
+    setTimeout(() => node.remove(), 230);
+  }, 3000);
 }
 
 class HttpError extends Error {
@@ -132,6 +169,16 @@ class HttpError extends Error {
     this.status = status;
     this.retryAfter = retryAfter;
   }
+}
+
+function friendlyError(error) {
+  if (error && error.status === 429) {
+    const wait = error.retryAfter
+      ? ` Try again in ${error.retryAfter}s.`
+      : ' Please wait a moment and try again.';
+    return `Too many requests right now.${wait}`;
+  }
+  return (error && error.message) || 'Something went wrong.';
 }
 
 async function callApi(path, options) {
@@ -165,115 +212,299 @@ function newClientToken() {
   return `t-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, (char) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  })[char]);
-}
-
-function setBusy(button, busy, label) {
+function setBusy(button, busy) {
   if (!button) {
     return;
   }
-  button.disabled = busy;
-  button.classList.toggle('is-busy', busy);
-  if (label) {
-    if (busy) {
-      button.dataset.idleLabel = button.textContent;
-      button.textContent = label;
-    } else if (button.dataset.idleLabel) {
-      button.textContent = button.dataset.idleLabel;
-      delete button.dataset.idleLabel;
+  button.disabled = Boolean(busy);
+  button.classList.toggle('is-busy', Boolean(busy));
+  button.setAttribute('aria-busy', String(Boolean(busy)));
+}
+
+/* ---------------- sorting-guide speech ---------------- */
+
+function cleanSpeechText(value) {
+  return String(value || '')
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, ' ')
+    .replace(/[#*_`>|~^]/g, ' ')
+    .replace(/[()[\]{}"“”‘’]/g, ' ')
+    .replace(/[•·]/g, '. ')
+    .replace(/[—–]/g, ', ')
+    .replace(/&/g, ' and ')
+    .replace(/[\/\\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function sentenceForSpeech(value) {
+  const text = cleanSpeechText(value);
+  if (!text) {
+    return '';
+  }
+  const normalized = text
+    .replace(/\s+([.,!?])/g, '$1')
+    .replace(/([.,!?])\1+/g, '$1');
+  return /[.!?]$/.test(normalized) ? normalized : `${normalized}.`;
+}
+
+function buildSortingGuideSpeech(result) {
+  if (!result) {
+    return '';
+  }
+  const item = sentenceForSpeech(result.item_name || result.display_name || 'Scanned item');
+  const category = cleanSpeechText(result.category || 'Dry waste');
+  const binColor = cleanSpeechText(result.bin_color || '');
+  const steps = Array.isArray(result.preparation_steps) && result.preparation_steps.length
+    ? result.preparation_steps
+    : String(result.instructions || '').split(/(?<=[.!?])\s+/);
+  const spokenSteps = steps.map(sentenceForSpeech).filter(Boolean);
+  const categoryLine = sentenceForSpeech(
+    `Category ${category}${binColor ? `, ${binColor} bin` : ''}`,
+  );
+  const parts = [item, categoryLine];
+  if (spokenSteps.length) {
+    parts.push(`Sorting steps. ${spokenSteps.join(' ')}`);
+  }
+  return parts.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+}
+
+function updateSpeechControls() {
+  if (!el.readAloudBtn || !el.autoReadBtn) {
+    return;
+  }
+  el.readAloudBtn.setAttribute('aria-pressed', String(speech.speaking));
+  el.readAloudBtn.classList.toggle('is-speaking', speech.speaking);
+  if (el.readAloudLabel) {
+    el.readAloudLabel.textContent = speech.speaking ? 'Stop' : 'Read aloud';
+  }
+  el.autoReadBtn.checked = speech.autoRead;
+  el.autoReadBtn.setAttribute('aria-pressed', String(speech.autoRead));
+  el.autoReadBtn.classList.toggle('is-on', speech.autoRead);
+  el.autoReadBtn.title = speech.autoRead ? 'Auto-read is on' : 'Auto-read is off';
+  if (el.settingsAutoRead) {
+    el.settingsAutoRead.checked = speech.autoRead;
+  }
+}
+
+function stopSpeech() {
+  speech.utterance = null;
+  speech.speaking = false;
+  if (speech.supported) {
+    try {
+      window.speechSynthesis.cancel();
+    } catch {
+      /* a browser without a working synthesiser must not break the UI */
     }
   }
+  updateSpeechControls();
 }
 
-/* ---------------- profile controls ---------------- */
-
-function resolveSelect(select, custom) {
-  const value = select.value;
-  if (value === CUSTOM) {
-    return (custom.value || '').trim();
+function primeSpeech() {
+  if (!speech.supported || speech.primed || speech.speaking) {
+    return;
   }
-  return value;
+  try {
+    const primer = new SpeechSynthesisUtterance(' ');
+    primer.volume = 0;
+    primer.rate = 1;
+    primer.onend = () => {
+      speech.primed = true;
+    };
+    primer.onerror = () => {
+      speech.primed = true;
+    };
+    window.speechSynthesis.speak(primer);
+    speech.primed = true;
+  } catch {
+    speech.primed = false;
+  }
 }
 
-function syncCustomFields() {
-  el.groupCustomField.classList.toggle('is-hidden', el.groupSelect.value !== CUSTOM);
-  el.cityCustomField.classList.toggle('is-hidden', el.citySelect.value !== CUSTOM);
+function speakSortingGuide() {
+  if (!speech.supported) {
+    toast('Read aloud is not supported in this browser.', true);
+    return;
+  }
+  const text = buildSortingGuideSpeech(state.result);
+  if (!text) {
+    toast('Scan an item to hear the sorting guide.', true);
+    return;
+  }
+
+  stopSpeech();
+  try {
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'en-IN';
+    utterance.rate = 0.98;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+    utterance.onstart = () => {
+      if (speech.utterance !== utterance) {
+        return;
+      }
+      speech.speaking = true;
+      updateSpeechControls();
+    };
+    utterance.onend = () => {
+      if (speech.utterance !== utterance) {
+        return;
+      }
+      speech.speaking = false;
+      speech.utterance = null;
+      updateSpeechControls();
+    };
+    utterance.onerror = (event) => {
+      if (speech.utterance !== utterance) {
+        return;
+      }
+      speech.speaking = false;
+      speech.utterance = null;
+      updateSpeechControls();
+      if (event && event.error && !['interrupted', 'canceled'].includes(event.error)) {
+        toast('Read aloud could not start.', true);
+      }
+    };
+    speech.utterance = utterance;
+    speech.speaking = true;
+    updateSpeechControls();
+    window.speechSynthesis.speak(utterance);
+  } catch {
+    speech.utterance = null;
+    speech.speaking = false;
+    updateSpeechControls();
+    toast('Read aloud is blocked in this browser.', true);
+  }
 }
 
-function setSelectValue(select, custom, value) {
+function initSpeech() {
+  if (!speech.supported) {
+    if (el.readAloudBtn) {
+      el.readAloudBtn.disabled = true;
+      el.readAloudBtn.title = 'Read aloud is not supported in this browser';
+    }
+    if (el.autoReadBtn) {
+      el.autoReadBtn.disabled = true;
+      el.autoReadBtn.title = 'Read aloud is not supported in this browser';
+    }
+  }
+  updateSpeechControls();
+}
+
+/* ---------------- profile ---------------- */
+
+function resolveSelect(select, input) {
+  if (select.value === CUSTOM) {
+    return (input.value || '').trim();
+  }
+  return select.value;
+}
+
+function syncCustomProfileFields() {
+  const showCommunity = el.communitySelect.value === CUSTOM;
+  const showCity = el.citySelect.value === CUSTOM;
+  el.customCommunityField.classList.toggle('hidden', !showCommunity);
+  el.customCityField.classList.toggle('hidden', !showCity);
+  el.customProfileWrap.classList.toggle('hidden', !showCommunity && !showCity);
+}
+
+function setSelectValue(select, input, value) {
   const preset = Array.from(select.options).find(
     (option) => option.value !== CUSTOM && option.value === value,
   );
   if (preset) {
     select.value = value;
-    custom.value = '';
+    input.value = '';
   } else if (value) {
     select.value = CUSTOM;
-    custom.value = value;
+    input.value = value;
+  } else {
+    select.selectedIndex = 0;
+    input.value = '';
   }
-  syncCustomFields();
+}
+
+function populateProfileForm(profile) {
+  el.displayNameInput.value = profile.username || '';
+  setSelectValue(el.communitySelect, el.customCommunityInput, profile.group_name || '');
+  setSelectValue(el.citySelect, el.customCityInput, profile.city || '');
+  syncCustomProfileFields();
+}
+
+function renderProfileStatus() {
+  if (!state.profile) {
+    el.profileStatus.textContent = 'No profile yet — set a display name to start.';
+    return;
+  }
+  const where = [state.profile.group_name, state.profile.city].filter(Boolean).join(' · ');
+  el.profileStatus.textContent = `${state.profile.username}${where ? ` — ${where}` : ''}`;
+}
+
+function renderPoints(points) {
+  el.ecoPointsValue.textContent = String(Number(points) || 0);
+}
+
+function animatePointsPill() {
+  el.ecoPointsPill.classList.remove('pop');
+  void el.ecoPointsPill.offsetWidth;
+  el.ecoPointsPill.classList.add('pop');
 }
 
 function saveProfile(user) {
   state.profile = user;
   localStorage.setItem(PROFILE_KEY, JSON.stringify(user));
-  el.username.value = user.username;
-  setSelectValue(el.groupSelect, el.groupCustom, user.group_name || '');
-  setSelectValue(el.citySelect, el.cityCustom, user.city || '');
-  renderProfileSummary();
+  localStorage.removeItem(LEGACY_PROFILE_KEY);
+  populateProfileForm(user);
+  renderProfileStatus();
 }
 
 function restoreProfile() {
-  const raw = localStorage.getItem(PROFILE_KEY);
+  const raw = localStorage.getItem(PROFILE_KEY) || localStorage.getItem(LEGACY_PROFILE_KEY);
   if (!raw) {
     return false;
   }
   try {
     const user = JSON.parse(raw);
     if (!user || typeof user.username !== 'string') {
-      throw new Error('invalid');
+      throw new Error('invalid profile');
     }
-    saveProfile(user);
-    if (typeof user.eco_points === 'number') {
-      el.ecoScore.textContent = String(user.eco_points);
-    }
+    state.profile = user;
+    populateProfileForm(user);
+    renderPoints(user.eco_points);
+    renderProfileStatus();
+    localStorage.setItem(PROFILE_KEY, JSON.stringify(user));
+    localStorage.removeItem(LEGACY_PROFILE_KEY);
     return true;
   } catch {
     localStorage.removeItem(PROFILE_KEY);
+    localStorage.removeItem(LEGACY_PROFILE_KEY);
     return false;
   }
 }
 
-function renderProfileSummary() {
-  const user = state.profile;
-  if (!user) {
-    el.profileSummary.textContent = 'Set a name, community and city to start.';
-    el.profileStatus.textContent = 'None';
+function applyUserPayload(payload) {
+  if (!payload || !payload.user) {
     return;
   }
-  const where = [user.group_name, user.city].filter(Boolean).join(' \u00b7 ');
-  el.profileSummary.textContent = `${user.username}${where ? ` \u2014 ${where}` : ''}`;
-  el.profileStatus.textContent = `${user.username} (${where || 'no group'})`;
+  saveProfile(payload.user);
+  renderPoints(payload.user.eco_points);
+  renderBins(payload.bin_counts);
+  renderBadges(payload.badges);
+  renderChallenges(payload.challenges);
 }
 
 async function applyProfile({ silent = false } = {}) {
-  const username = el.username.value.trim();
+  const username = el.displayNameInput.value.trim();
   if (!username) {
     toast('Enter a display name first.', true);
-    el.username.focus();
+    el.displayNameInput.focus();
     return;
   }
-  const groupName = resolveSelect(el.groupSelect, el.groupCustom);
-  const city = resolveSelect(el.citySelect, el.cityCustom);
+  const groupName = resolveSelect(el.communitySelect, el.customCommunityInput)
+    || el.communitySelect.options[0].value;
+  const city = resolveSelect(el.citySelect, el.customCityInput)
+    || el.citySelect.options[0].value;
 
-  setBusy(el.setProfile, true, 'Applying\u2026');
+  setBusy(el.applyProfileBtn, true);
   try {
     const payload = await postJson('/api/user', {
       username,
@@ -285,283 +516,533 @@ async function applyProfile({ silent = false } = {}) {
       toast(`Profile applied: ${payload.user.username}`);
     }
   } catch (error) {
-    toast(error.message, true);
+    toast(friendlyError(error), true);
   } finally {
-    setBusy(el.setProfile, false);
+    setBusy(el.applyProfileBtn, false);
   }
 }
 
-function applyUserPayload(payload) {
-  saveProfile(payload.user);
-  el.ecoScore.textContent = String(payload.user.eco_points);
-  renderBins(payload.bin_counts);
-  renderBadges(payload.badges);
-  renderChallenges(payload.challenges);
+async function hydrateProfile() {
+  if (!state.profile) {
+    return;
+  }
+  try {
+    const payload = await postJson('/api/user', {
+      username: state.profile.username,
+      group_name: state.profile.group_name,
+      city: state.profile.city,
+    });
+    applyUserPayload(payload);
+  } catch (error) {
+    toast(`Could not refresh your server profile. ${friendlyError(error)}`, true);
+  }
 }
 
-/* ---------------- header / settings ---------------- */
+function resetLocalProfile() {
+  localStorage.removeItem(PROFILE_KEY);
+  localStorage.removeItem(LEGACY_PROFILE_KEY);
+  state.profile = null;
+  state.result = null;
+  state.disposeToken = null;
+
+  el.displayNameInput.value = '';
+  el.communitySelect.selectedIndex = 0;
+  el.citySelect.selectedIndex = 0;
+  el.customCommunityInput.value = '';
+  el.customCityInput.value = '';
+  syncCustomProfileFields();
+
+  renderPoints(0);
+  renderProfileStatus();
+  clearResult();
+
+  const zeroCounts = Object.fromEntries(Object.keys(DOMAIN.bins).map((category) => [category, 0]));
+  renderBins(zeroCounts);
+
+  document.querySelectorAll('[data-badge]').forEach((node) => {
+    node.classList.remove('unlocked');
+    const status = node.querySelector('.badge-status');
+    if (status) {
+      status.textContent = 'Locked';
+    }
+  });
+
+  document.querySelectorAll('[data-day]').forEach((node) => {
+    node.classList.remove('completed');
+    const button = node.querySelector('[data-claim-day]');
+    if (button) {
+      button.disabled = false;
+      button.classList.remove('is-busy');
+      button.removeAttribute('aria-busy');
+      button.textContent = `Claim +${DOMAIN.challengeReward}`;
+    }
+  });
+  localStorage.removeItem(ACTIVITY_KEY);
+  state.activity = [];
+  renderRecentActivity();
+  setActiveBin(null);
+  renderChallengeProgress();
+  applyChallengeFilter();
+  applyBadgeFilter();
+
+  el.settingsPopover.classList.add('hidden');
+  el.settingsToggleBtn.setAttribute('aria-expanded', 'false');
+  toast('Local profile cleared. Data already logged stays on the server.');
+}
+
+/* ---------------- capabilities ---------------- */
 
 async function loadCapabilities() {
   try {
     const payload = await callApi('/api/capabilities');
+    state.capabilities = payload;
     const vision = payload.ai_vision || {};
-    el.visionStatus.textContent = vision.enabled
-      ? `AI vision on \u2014 ${vision.model} (${vision.provider})`
-      : 'AI vision off \u2014 deterministic rules (no GEMINI_API_KEY)';
+    if (vision.enabled) {
+      el.visionStatus.innerHTML = `AI Vision: <strong>on</strong> · ${escapeHtml(
+        vision.model || 'model',
+      )} (${escapeHtml(vision.provider || 'google-genai')})`;
+      if (el.visionStatusShort) el.visionStatusShort.textContent = 'on';
+      if (el.networkLabel) el.networkLabel.textContent = 'AI Vision on';
+    } else {
+      el.visionStatus.innerHTML = 'AI Vision: <strong>off</strong> · deterministic offline rules';
+      if (el.visionStatusShort) el.visionStatusShort.textContent = 'off';
+      if (el.networkLabel) el.networkLabel.textContent = 'Local engine';
+    }
     const limits = payload.rate_limits || {};
     el.limitsStatus.textContent = payload.rate_limit_enabled
-      ? `Limits/min \u2014 scan ${limits.identify}, AI ${limits.ai_vision}, writes ${limits.general}`
-      : 'Rate limiting disabled';
+      ? `Rate limits/min — scan ${limits.identify}, AI ${limits.ai_vision}, writes ${limits.general}`
+      : 'Rate limiting is disabled on this server.';
   } catch (error) {
-    el.visionStatus.textContent = 'Capabilities unavailable';
-    el.limitsStatus.textContent = String(error.message).slice(0, 80);
+    el.visionStatus.textContent = 'Scan engine status unavailable.';
+    el.limitsStatus.textContent = friendlyError(error);
   }
-}
-
-function resetProfile() {
-  localStorage.removeItem(PROFILE_KEY);
-  state.profile = null;
-  state.result = null;
-  el.ecoScore.textContent = '0';
-  el.resultCard.hidden = true;
-  el.username.value = '';
-  el.groupSelect.value = el.groupSelect.options[0].value;
-  el.citySelect.value = el.citySelect.options[0].value;
-  el.groupCustom.value = '';
-  el.cityCustom.value = '';
-  syncCustomFields();
-  renderProfileSummary();
-  renderBins(
-    Object.fromEntries(Object.keys(DOMAIN.bins).map((category) => [category, 0])),
-  );
-  toast('Local profile cleared. Data already logged stays on the server.');
-  el.settings.open = false;
 }
 
 /* ---------------- bins / badges / challenges ---------------- */
-
-function pulseBin(category, count) {
-  const bin = el.bins.querySelector(`[data-category="${category}"]`);
-  if (!bin) {
-    return;
-  }
-  if (typeof count === 'number') {
-    const counter = bin.querySelector('[data-count-for]');
-    if (counter) {
-      counter.textContent = String(count);
-    }
-  }
-  bin.classList.remove('is-pulsing');
-  void bin.offsetWidth;
-  bin.classList.add('is-pulsing');
-}
 
 function renderBins(counts) {
   if (!counts) {
     return;
   }
   for (const [category, count] of Object.entries(counts)) {
-    pulseBin(category, count);
+    const counter = document.querySelector(`[data-bin-count="${category}"]`);
+    if (!counter) {
+      continue;
+    }
+    const previous = counter.textContent;
+    counter.textContent = String(count);
+    if (previous !== String(count)) {
+      counter.classList.remove('bump');
+      void counter.offsetWidth;
+      counter.classList.add('bump');
+    }
   }
+}
+
+function setActiveBin(category) {
+  document.querySelectorAll('[data-bin-card]').forEach((card) => {
+    card.classList.toggle('is-active', card.dataset.binCard === category);
+  });
+}
+
+function categoryClassName(category) {
+  return {
+    'Wet Waste': 'cat-wet',
+    'Recyclable Waste': 'cat-recyclable',
+    'Dry Waste': 'cat-dry',
+    'E-Waste': 'cat-ewaste',
+    'Hazardous Waste': 'cat-hazardous',
+  }[category] || 'cat-dry';
+}
+
+function loadActivity() {
+  try {
+    const raw = localStorage.getItem(ACTIVITY_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    state.activity = Array.isArray(list) ? list.slice(0, 6) : [];
+  } catch {
+    state.activity = [];
+  }
+}
+
+function saveActivity() {
+  try {
+    localStorage.setItem(ACTIVITY_KEY, JSON.stringify(state.activity.slice(0, 6)));
+  } catch {
+    /* private browsing can reject storage; the session list still works */
+  }
+}
+
+function renderRecentActivity() {
+  if (!el.recentActivityList) {
+    return;
+  }
+  if (!state.activity.length) {
+    el.recentActivityList.innerHTML = '<p class="empty-state">No disposals yet.</p>';
+    return;
+  }
+  el.recentActivityList.innerHTML = state.activity.map((entry) => `
+    <div class="recent-item">
+      <span class="recent-dot ${categoryClassName(entry.category)}" aria-hidden="true"></span>
+      <div class="recent-body">
+        <div class="recent-name">${escapeHtml(entry.name)}</div>
+        <div class="recent-meta">${escapeHtml(entry.category.replace(' Waste', ''))} · +${Number(entry.points) || 0} pts</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function addRecentActivity(entry) {
+  state.activity.unshift({
+    name: String(entry.name || 'Item').slice(0, 80),
+    category: String(entry.category || 'Dry Waste'),
+    points: Number(entry.points) || 0,
+  });
+  state.activity = state.activity.slice(0, 6);
+  saveActivity();
+  renderRecentActivity();
+}
+
+function animateBinReward(category, points) {
+  const card = document.querySelector(`[data-bin-card="${category}"]`);
+  if (!card) {
+    return;
+  }
+  card.classList.remove('pop');
+  void card.offsetWidth;
+  card.classList.add('pop');
+
+  card.querySelectorAll('.bin-float').forEach((node) => node.remove());
+  const float = document.createElement('span');
+  float.className = 'bin-float';
+  float.setAttribute('aria-hidden', 'true');
+  float.textContent = `+${points}`;
+  card.appendChild(float);
+  setTimeout(() => float.remove(), 1200);
 }
 
 function renderBadges(badges) {
-  if (!badges) {
+  if (!Array.isArray(badges)) {
     return;
   }
   for (const badge of badges) {
-    const node = document.querySelector(`.badge[data-badge="${badge.id}"]`);
+    const node = document.querySelector(`[data-badge="${badge.id}"]`);
     if (!node) {
       continue;
     }
-    node.classList.toggle('is-unlocked', Boolean(badge.unlocked));
-    node.classList.toggle('is-locked', !badge.unlocked);
-    const label = node.querySelector('.badge-state');
-    if (label) {
-      label.textContent = badge.unlocked ? 'Unlocked' : 'Locked';
+    node.classList.toggle('unlocked', Boolean(badge.unlocked));
+    node.dataset.status = badge.unlocked ? 'unlocked' : 'locked';
+    const status = node.querySelector('.badge-status');
+    if (status) {
+      status.textContent = badge.unlocked ? 'Unlocked' : 'Locked';
     }
   }
+  applyBadgeFilter();
+}
+
+function applyBadgeFilter() {
+  if (!el.badgeFilterSelect) {
+    return;
+  }
+  const mode = el.badgeFilterSelect.value;
+  document.querySelectorAll('[data-badge]').forEach((node) => {
+    const status = node.classList.contains('unlocked') ? 'unlocked' : 'locked';
+    node.classList.toggle('hidden', mode !== 'all' && mode !== status);
+  });
 }
 
 function renderChallenges(challenges) {
-  if (!challenges) {
+  if (!Array.isArray(challenges)) {
     return;
   }
   for (const challenge of challenges) {
-    const row = document.querySelector(`.challenge[data-day="${challenge.day_number}"]`);
-    if (!row) {
+    const card = document.querySelector(`[data-day="${challenge.day_number}"]`);
+    if (!card) {
       continue;
     }
-    row.classList.toggle('is-done', Boolean(challenge.completed));
-    row.dataset.completed = challenge.completed ? 'true' : 'false';
-    const button = row.querySelector('.btn-claim');
+    const done = Boolean(challenge.completed);
+    card.classList.toggle('completed', done);
+    const button = card.querySelector('[data-claim-day]');
     if (button) {
-      button.disabled = Boolean(challenge.completed);
-      button.textContent = challenge.completed
-        ? 'Claimed'
-        : `Claim +${DOMAIN.challengeReward}`;
+      button.disabled = done;
+      button.classList.remove('is-busy');
+      button.removeAttribute('aria-busy');
+      button.textContent = done ? 'Claimed' : `Claim +${DOMAIN.challengeReward}`;
     }
   }
+  renderChallengeProgress(challenges);
   applyChallengeFilter();
 }
 
+function renderChallengeProgress(challenges) {
+  const list = Array.isArray(challenges)
+    ? challenges
+    : Array.from(document.querySelectorAll('.challenge-card')).map((card) => ({
+        day_number: Number(card.dataset.day),
+        completed: card.classList.contains('completed'),
+      }));
+  const total = list.length || 7;
+  const done = list.filter((item) => item.completed).length;
+  const percent = total ? Math.round((done / total) * 100) : 0;
+
+  if (el.challengeProgressText) {
+    el.challengeProgressText.textContent = `${done} of ${total} days`;
+  }
+  if (el.challengeProgressPercent) {
+    el.challengeProgressPercent.textContent = `${percent}%`;
+  }
+  if (el.challengeProgressBar) {
+    el.challengeProgressBar.style.width = `${percent}%`;
+  }
+  if (el.challengeRail) {
+    el.challengeRail.querySelectorAll('[data-rail-day]').forEach((chip) => {
+      const day = Number(chip.dataset.railDay);
+      const item = list.find((entry) => Number(entry.day_number) === day);
+      const doneDay = Boolean(item && item.completed);
+      chip.classList.toggle('is-done', doneDay);
+      const stateEl = chip.querySelector('[data-rail-state]');
+      if (stateEl) {
+        stateEl.textContent = doneDay ? 'Done' : 'Pending';
+      }
+    });
+  }
+}
+
 function applyChallengeFilter() {
-  const mode = el.challengeFilter.value;
+  const mode = el.challengeFilterSelect.value;
   let visible = 0;
-  for (const row of el.challenges.querySelectorAll('.challenge')) {
-    const done = row.dataset.completed === 'true';
+  el.challengeList.querySelectorAll('[data-day]').forEach((card) => {
+    const done = card.classList.contains('completed');
     const show = mode === 'all' || (mode === 'completed' ? done : !done);
-    row.hidden = !show;
+    card.classList.toggle('hidden', !show);
     if (show) {
       visible += 1;
     }
+  });
+
+  let empty = document.getElementById('challengeEmpty');
+  if (visible === 0 && !empty) {
+    empty = document.createElement('div');
+    empty.id = 'challengeEmpty';
+    empty.className = 'empty-state';
+    empty.textContent = 'No tasks match this filter right now.';
+    el.challengeList.appendChild(empty);
+  } else if (visible > 0 && empty) {
+    empty.remove();
   }
-  el.challenges.classList.toggle('is-filtered-empty', visible === 0);
 }
 
 /* ---------------- result card ---------------- */
 
+function updatePrepCheckStatus() {
+  if (!el.prepChecklist || !el.prepCheckStatus) {
+    return;
+  }
+  const boxes = Array.from(el.prepChecklist.querySelectorAll('.prep-box'));
+  const checked = boxes.filter((box) => box.checked).length;
+  el.prepCheckStatus.textContent = `${checked} of ${boxes.length} steps`;
+}
+
+function renderPrepChecklist(steps) {
+  if (!el.prepChecklist || !el.prepCheckStatus) {
+    return;
+  }
+  const items = (steps || []).filter(Boolean).slice(0, 3);
+  if (!items.length) {
+    el.prepChecklist.innerHTML = '';
+    el.prepCheckStatus.textContent = '0 of 0 steps';
+    return;
+  }
+  el.prepChecklist.innerHTML = items.map((step) => `
+    <label class="prep-item">
+      <input class="prep-box" type="checkbox" />
+      <span>${escapeHtml(step)}</span>
+    </label>
+  `).join('');
+  el.prepChecklist.querySelectorAll('.prep-box').forEach((box) => {
+    box.addEventListener('change', updatePrepCheckStatus);
+  });
+  updatePrepCheckStatus();
+}
+
+function renderSelectedBinTag(category) {
+  const meta = DOMAIN.bins[category] || DOMAIN.bins['Dry Waste'];
+  el.selectedBinTag.className = `bin-preview-tag ${categoryClassName(category)}`;
+  el.selectedBinTag.innerHTML =
+    '<span class="bin-dot" aria-hidden="true"></span>' +
+    `<span>Target bin: ${escapeHtml(category)} (${escapeHtml(meta.bin_color)})</span>`;
+}
+
 function renderResult(result) {
   state.result = result;
-  el.resultCard.hidden = false;
+  state.disposeToken = newClientToken();
 
-  const meta = DOMAIN.bins[result.category];
-  if (meta) {
-    el.resultCard.style.setProperty('--bin', meta.hex);
+  el.resultEmptyState.classList.add('hidden');
+  el.resultActiveState.classList.remove('hidden');
+
+  const itemName = result.item_name || result.display_name || 'Scanned item';
+  el.resultItemName.textContent = itemName;
+  el.resultRewardPill.textContent = `+${result.points}`;
+  if (el.resultCategoryBadge) {
+    el.resultCategoryBadge.className = `category-badge ${categoryClassName(result.category)}`;
+    el.resultCategoryBadge.textContent = result.category;
+  }
+  if (el.resultBinBadge) {
+    el.resultBinBadge.textContent = `${result.bin_color || 'Gray'} bin`;
   }
 
-  const itemName = result.item_name || result.display_name || 'Unknown item';
-  el.resultCategory.textContent = result.category;
-  el.resultPoints.textContent = `+${result.points} pts`;
-  el.resultName.textContent = itemName;
-  el.resultInstructions.textContent = result.instructions;
+  const isAi = (result.analysis_mode || result.source) === 'ai_vision';
+  el.resultModePill.textContent = isAi
+    ? `AI Vision${result.ai_model ? ` · ${result.ai_model}` : ''}`
+    : 'Offline Rules';
+  el.resultModePill.className = `pill ${isAi ? 'pill-mode-ai' : 'pill-mode-offline'}`;
 
-  const fromAi = (result.analysis_mode || result.source) === 'ai_vision';
-  el.resultSource.hidden = false;
-  el.resultSource.dataset.source = fromAi ? 'ai_vision' : 'offline_fallback';
-  el.resultSource.textContent = fromAi
-    ? `AI Vision${result.ai_model ? ` \u00b7 ${result.ai_model}` : ''}`
-    : 'Offline rules';
-
-  const steps = Array.isArray(result.preparation_steps) ? result.preparation_steps : [];
-  if (steps.length > 0) {
-    el.resultAnalysis.hidden = false;
-    if (typeof result.confidence === 'string' && result.confidence) {
-      el.resultConfidence.textContent = `Confidence: ${result.confidence}`;
-    } else if (typeof result.confidence === 'number') {
-      el.resultConfidence.textContent = `Confidence: ${Math.round(result.confidence * 100)}%`;
-    } else {
-      el.resultConfidence.textContent = 'Confidence not reported';
-    }
-    el.resultSteps.innerHTML = steps
-      .map((step) => `<li>${escapeHtml(step)}</li>`)
-      .join('');
-    el.resultWhy.textContent = result.why || '';
-    el.resultWhy.hidden = !result.why;
+  if (typeof result.confidence === 'string' && result.confidence) {
+    el.resultConfidencePill.textContent = `Confidence: ${result.confidence}`;
+  } else if (typeof result.confidence === 'number') {
+    el.resultConfidencePill.textContent = `Confidence: ${Math.round(result.confidence * 100)}%`;
   } else {
-    el.resultAnalysis.hidden = true;
+    el.resultConfidencePill.textContent = 'Confidence: n/a';
   }
+
+  const steps = Array.isArray(result.preparation_steps) && result.preparation_steps.length
+    ? result.preparation_steps
+    : String(result.instructions || '')
+        .split(/(?<=[.!?])\s+/)
+        .map((step) => step.trim())
+        .filter(Boolean);
+  el.resultStepsList.innerHTML = (steps.length ? steps : ['No specific preparation steps were reported.'])
+    .map((step) => `<li>${escapeHtml(step)}</li>`)
+    .join('');
+  renderPrepChecklist(steps);
+
+  const note = result.local_note
+    || 'Rules vary by municipality — check your local waste collection guidance.';
+  el.resultLocalNote.innerHTML = `
+    <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
+    <div><strong>Regional note:</strong> <span>${escapeHtml(note)}</span></div>
+  `;
 
   if (result.vision_error) {
-    el.resultNote.hidden = false;
-    el.resultNote.textContent = `AI vision unavailable \u2014 ${result.vision_error}. Showing offline rules.`;
-  } else if (!fromAi && result.vision_available === false) {
-    el.resultNote.hidden = false;
-    el.resultNote.textContent =
+    el.resultVisionNote.textContent = `AI vision unavailable — ${result.vision_error}. Showing offline rules.`;
+    el.resultVisionNote.classList.remove('hidden');
+  } else if (!isAi && result.vision_available === false) {
+    el.resultVisionNote.textContent =
       'AI vision is not configured on this server, so the offline rule engine answered.';
+    el.resultVisionNote.classList.remove('hidden');
   } else {
-    el.resultNote.hidden = true;
+    el.resultVisionNote.classList.add('hidden');
   }
 
-  el.resultLocalNote.hidden = !result.local_note;
-  el.resultLocalNote.textContent = result.local_note || '';
+  if (Array.from(el.binOverrideSelect.options).some((option) => option.value === result.category)) {
+    el.binOverrideSelect.value = result.category;
+  }
+  renderSelectedBinTag(el.binOverrideSelect.value);
+  setActiveBin(result.category);
 
-  // Reset the correction control for each new scan.
-  el.categoryOverride.value = '';
-  el.overrideHint.hidden = true;
-  setBusy(el.disposeBtn, false);
-  el.disposeBtn.textContent = 'Toss into virtual bin';
+  setBusy(el.tossToBinBtn, false);
+  if (speech.autoRead) {
+    speakSortingGuide();
+  }
 }
 
 function clearResult() {
+  stopSpeech();
   state.result = null;
-  el.resultCard.hidden = true;
-  el.categoryOverride.value = '';
-  el.overrideHint.hidden = true;
+  state.disposeToken = null;
+  setActiveBin(null);
+  if (el.prepChecklist) el.prepChecklist.innerHTML = '';
+  if (el.prepCheckStatus) el.prepCheckStatus.textContent = '0 of 0 steps';
+  el.resultActiveState.classList.add('hidden');
+  el.resultEmptyState.classList.remove('hidden');
+  el.resultVisionNote.classList.add('hidden');
+  setBusy(el.tossToBinBtn, false);
 }
 
 /* ---------------- camera ---------------- */
 
-async function stopStream() {
+function clearScanPreview() {
+  stopCamera(false);
+  if (camera.previewUrl) {
+    URL.revokeObjectURL(camera.previewUrl);
+    camera.previewUrl = null;
+  }
+  el.imagePreview.src = '';
+  el.imagePreview.classList.add('hidden');
+  el.cameraPlaceholder.classList.remove('hidden');
+  el.samplePresetSelect.value = '';
+  clearResult();
+}
+
+function hideFallbackMessage() {
+  el.cameraFallbackBox.classList.add('hidden');
+}
+
+function showFallbackMessage(message) {
+  el.cameraFallbackMsg.textContent = message;
+  el.cameraFallbackBox.classList.remove('hidden');
+}
+
+function stopStream() {
   if (camera.stream) {
-    for (const track of camera.stream.getTracks()) {
-      track.stop();
-    }
+    camera.stream.getTracks().forEach((track) => track.stop());
     camera.stream = null;
   }
-  el.video.srcObject = null;
+  el.cameraVideo.srcObject = null;
 }
 
-function setCameraIdle() {
-  el.video.hidden = true;
-  el.preview.hidden = true;
-  el.placeholder.hidden = false;
-  el.startCamera.hidden = false;
-  el.capturePhoto.hidden = true;
-  el.switchCamera.classList.add('is-hidden');
-  el.retake.hidden = true;
-  el.stopCamera.hidden = true;
+function showPreview(url) {
+  if (camera.previewUrl) {
+    URL.revokeObjectURL(camera.previewUrl);
+  }
+  camera.previewUrl = url;
+  el.imagePreview.src = url;
+  el.imagePreview.classList.remove('hidden');
+  el.cameraVideo.classList.add('hidden');
+  el.cameraPlaceholder.classList.add('hidden');
 }
 
-function setCameraStatus(message, isError = false) {
-  el.cameraStatus.textContent = message || '';
-  el.cameraStatus.classList.toggle('is-error', Boolean(isError));
-}
-
-async function listCameras() {
+async function refreshCameraDevices(activeDeviceId = null) {
+  if (!navigator.mediaDevices || typeof navigator.mediaDevices.enumerateDevices !== 'function') {
+    return;
+  }
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
     camera.devices = devices.filter((device) => device.kind === 'videoinput');
+    if (camera.devices.length > 1) {
+      el.cameraDeviceSelect.innerHTML = camera.devices
+        .map((device, index) =>
+          `<option value="${escapeHtml(device.deviceId)}">${escapeHtml(
+            device.label || `Camera ${index + 1}`,
+          )}</option>`,
+        )
+        .join('');
+      if (activeDeviceId) {
+        el.cameraDeviceSelect.value = activeDeviceId;
+      }
+      el.cameraSwitchWrap.classList.remove('hidden');
+    } else {
+      el.cameraSwitchWrap.classList.add('hidden');
+    }
   } catch {
-    camera.devices = [];
+    el.cameraSwitchWrap.classList.add('hidden');
   }
-  return camera.devices;
-}
-
-function renderCameraChooser() {
-  const select = el.switchCamera;
-  select.innerHTML = '';
-  if (camera.devices.length <= 1) {
-    select.classList.add('is-hidden');
-    return;
-  }
-  for (const [index, device] of camera.devices.entries()) {
-    const option = document.createElement('option');
-    option.value = device.deviceId;
-    option.textContent = device.label || `Camera ${index + 1}`;
-    select.append(option);
-  }
-  if (camera.deviceId) {
-    select.value = camera.deviceId;
-  }
-  select.classList.remove('is-hidden');
 }
 
 async function startCamera(deviceId = null) {
+  hideFallbackMessage();
   if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
-    setCameraStatus('This browser has no camera API. Upload a photo or tap a sample.', true);
+    showFallbackMessage('Live camera is not supported in this browser or context (requires HTTPS or localhost).');
     return;
   }
   const localHost = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
   if (!window.isSecureContext && !localHost) {
-    setCameraStatus('Live camera needs HTTPS or localhost. Upload a photo instead.', true);
+    showFallbackMessage('Live camera needs HTTPS or localhost. Upload a photo instead.');
     return;
   }
 
-  setBusy(el.startCamera, true, 'Opening\u2026');
-  setCameraStatus('Requesting camera permission\u2026');
+  stopCamera(false);
   try {
-    await stopStream();
     const constraints = deviceId
       ? { video: { deviceId: { exact: deviceId } }, audio: false }
       : { video: { facingMode: { ideal: 'environment' } }, audio: false };
@@ -575,105 +1056,75 @@ async function startCamera(deviceId = null) {
       }
     }
 
-    el.video.srcObject = camera.stream;
+    el.cameraVideo.srcObject = camera.stream;
     try {
-      await el.video.play();
+      await el.cameraVideo.play();
     } catch {
       /* autoplay can be blocked; the stream is attached regardless */
     }
-    camera.deviceId = deviceId || camera.stream.getVideoTracks()[0]?.getSettings?.().deviceId || null;
+    camera.deviceId = deviceId
+      || camera.stream.getVideoTracks()[0]?.getSettings?.().deviceId
+      || null;
 
-    el.placeholder.hidden = true;
-    el.preview.hidden = true;
-    el.video.hidden = false;
-    el.capturePhoto.hidden = false;
-    el.stopCamera.hidden = false;
-    el.retake.hidden = true;
-    el.startCamera.hidden = true;
+    el.cameraVideo.classList.remove('hidden');
+    el.cameraPlaceholder.classList.add('hidden');
+    el.imagePreview.classList.add('hidden');
+    el.startCameraBtn.classList.add('hidden');
+    el.capturePhotoBtn.classList.remove('hidden');
+    el.stopCameraBtn.classList.remove('hidden');
 
-    await listCameras();
-    renderCameraChooser();
-    setCameraStatus(
-      camera.devices.length > 1
-        ? 'Camera live. Capture, or switch camera from the dropdown.'
-        : 'Camera live. Frame the item and capture.',
-    );
+    await refreshCameraDevices(camera.deviceId);
   } catch (error) {
-    const name = (error && error.name) || 'Error';
     const messages = {
-      NotAllowedError: 'Camera permission denied. Upload a photo or tap a sample.',
-      PermissionDeniedError: 'Camera permission denied. Upload a photo or tap a sample.',
-      NotFoundError: 'No camera found. Upload a photo or tap a sample.',
-      DevicesNotFoundError: 'No camera found. Upload a photo or tap a sample.',
+      NotAllowedError: 'Camera permission was denied. Upload a photo or pick a sample instead.',
+      PermissionDeniedError: 'Camera permission was denied. Upload a photo or pick a sample instead.',
+      NotFoundError: 'No camera was found. Upload a photo or pick a sample instead.',
+      DevicesNotFoundError: 'No camera was found. Upload a photo or pick a sample instead.',
       NotReadableError: 'The camera is busy in another app. Close it, or upload a photo.',
-      TrackStartError: 'The camera could not start. Upload a photo or tap a sample.',
+      TrackStartError: 'The camera could not start. Upload a photo instead.',
       SecurityError: 'The browser blocked camera access. Upload a photo instead.',
     };
-    setCameraStatus(messages[name] || `Camera unavailable (${name}). Upload a photo instead.`, true);
-    setCameraIdle();
-  } finally {
-    setBusy(el.startCamera, false);
+    showFallbackMessage(messages[error && error.name] || 'The camera could not start. Upload a photo instead.');
+    stopCamera(false);
   }
 }
 
-function showPreview(url) {
-  if (camera.previewUrl) {
-    URL.revokeObjectURL(camera.previewUrl);
+function stopCamera(resetStage = true) {
+  stopStream();
+  el.cameraVideo.classList.add('hidden');
+  el.startCameraBtn.classList.remove('hidden');
+  el.capturePhotoBtn.classList.add('hidden');
+  el.stopCameraBtn.classList.add('hidden');
+  el.cameraSwitchWrap.classList.add('hidden');
+
+  if (resetStage && el.imagePreview.classList.contains('hidden')) {
+    el.cameraPlaceholder.classList.remove('hidden');
   }
-  camera.previewUrl = url;
-  el.preview.src = url;
-  el.preview.hidden = false;
-  el.video.hidden = true;
-  el.placeholder.hidden = true;
 }
 
 async function capturePhoto() {
-  if (!camera.stream) {
-    setCameraStatus('Camera is not running.', true);
+  if (!camera.stream || !el.cameraVideo.videoWidth) {
     return;
   }
-  const width = el.video.videoWidth || 1280;
-  const height = el.video.videoHeight || 720;
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
+  const canvas = el.captureCanvas;
+  canvas.width = el.cameraVideo.videoWidth;
+  canvas.height = el.cameraVideo.videoHeight;
   const context = canvas.getContext('2d');
   if (!context) {
-    setCameraStatus('This browser could not capture the frame.', true);
+    showFallbackMessage('This browser could not capture the frame.');
     return;
   }
-  context.drawImage(el.video, 0, 0, width, height);
+  context.drawImage(el.cameraVideo, 0, 0, canvas.width, canvas.height);
 
-  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85));
   if (!blob) {
-    setCameraStatus('Capture produced no image. Try again.', true);
+    showFallbackMessage('The capture produced no image. Try again.');
     return;
   }
 
   showPreview(URL.createObjectURL(blob));
-  el.capturePhoto.hidden = true;
-  el.retake.hidden = false;
-  el.switchCamera.classList.add('is-hidden');
-  setCameraStatus(`Captured ${width}\u00d7${height}. Analysing\u2026`);
-
+  stopCamera(false);
   await identifyBlob(blob, `camera-capture-${Date.now()}.jpg`);
-  setCameraStatus('Captured. Retake for another frame, or stop the camera.');
-}
-
-function retakePhoto() {
-  el.retake.hidden = true;
-  el.capturePhoto.hidden = false;
-  el.switchCamera.classList.toggle('is-hidden', camera.devices.length <= 1);
-  el.preview.hidden = true;
-  el.video.hidden = false;
-  clearResult();
-  setCameraStatus('Ready \u2014 frame the item and capture again.');
-}
-
-async function stopCamera() {
-  await stopStream();
-  setCameraIdle();
-  setCameraStatus('Camera stopped.');
 }
 
 /* ---------------- identification ---------------- */
@@ -683,38 +1134,31 @@ async function identifyRequest(buildForm, label) {
     return;
   }
   state.busy = true;
-  for (const preset of el.presets) {
-    preset.disabled = true;
-  }
-  setBusy(el.useSample, true, 'Scanning\u2026');
+  stopSpeech();
+  el.presetChips.forEach((chip) => {
+    chip.disabled = true;
+  });
+  setBusy(el.samplePresetSelect, true);
   try {
     const result = await postForm('/api/identify', buildForm());
     renderResult(result);
-    const fromAi = (result.analysis_mode || result.source) === 'ai_vision';
-    const provenance = fromAi ? 'AI vision' : 'offline rules';
-    const itemName = result.item_name || result.display_name;
-    toast(
-      result.fallback
-        ? `${label}: no match, sorted as ${result.category} (${provenance}).`
-        : `${itemName} \u2192 ${result.category} (+${result.points} pts, ${provenance})`,
-    );
+    const isAi = (result.analysis_mode || result.source) === 'ai_vision';
+    const provenance = isAi ? 'AI vision' : 'offline rules';
+    const itemName = result.item_name || result.display_name || label || 'Item';
+    toast(`${itemName} → ${result.category} (+${result.points} pts, ${provenance})`);
   } catch (error) {
-    const wait = error.retryAfter ? ` Retry in ${error.retryAfter}s.` : '';
-    toast(`${error.message}${wait}`, true);
-    if (error.status === 429) {
-      setCameraStatus(error.message, true);
-    }
+    toast(friendlyError(error), true);
   } finally {
     state.busy = false;
-    for (const preset of el.presets) {
-      preset.disabled = false;
-    }
-    setBusy(el.useSample, false);
+    el.presetChips.forEach((chip) => {
+      chip.disabled = false;
+    });
+    setBusy(el.samplePresetSelect, false);
   }
 }
 
 function identifyPreset(keyword, label) {
-  identifyRequest(() => {
+  return identifyRequest(() => {
     const form = new FormData();
     form.append('preset_keyword', keyword);
     return form;
@@ -727,15 +1171,6 @@ function identifyBlob(blob, filename) {
     form.append('image', blob, filename);
     return form;
   }, filename);
-}
-
-function handleFile(file) {
-  if (!file) {
-    return;
-  }
-  showPreview(URL.createObjectURL(file));
-  setCameraStatus(`${file.name} selected. Analysing\u2026`);
-  identifyBlob(file, file.name || 'upload.jpg');
 }
 
 /* ---------------- disposal ---------------- */
@@ -753,37 +1188,45 @@ async function dispose() {
     return;
   }
 
-  const item = state.result;
-  const override = el.categoryOverride.value;
+  const category = el.binOverrideSelect.value || state.result.category;
+  const token = state.disposeToken || newClientToken();
   state.busy = true;
-  setBusy(el.disposeBtn, true, 'Tossing\u2026');
+  setBusy(el.tossToBinBtn, true);
   try {
     const payload = await postJson('/api/dispose', {
       user_id: state.profile.id,
-      item_name: item.item_name || item.display_name,
-      client_token: newClientToken(),
-      ...(override ? { category_override: override } : {}),
+      item_name: state.result.item_name || state.result.display_name,
+      category_override: category,
+      client_token: token,
     });
-
-    el.ecoScore.textContent = String(payload.new_points);
+    state.disposeToken = null;
     state.profile.eco_points = payload.new_points;
     localStorage.setItem(PROFILE_KEY, JSON.stringify(state.profile));
+    renderPoints(payload.new_points);
+    animatePointsPill();
     renderBins(payload.bin_counts);
     renderBadges(payload.badges);
-    clearResult();
 
+    const logged = payload.logged || {};
+    if (!payload.duplicate) {
+      animateBinReward(logged.category || category, logged.points || 0);
+      addRecentActivity({
+        name: logged.item_name || 'Item',
+        category: logged.category || category,
+        points: logged.points || 0,
+      });
+    }
     toast(
       payload.duplicate
-        ? 'Already logged \u2014 no double credit.'
-        : `${payload.logged.item_name} \u2192 ${payload.logged.category} (+${payload.logged.points} pts)`,
+        ? 'Already logged — no double credit'
+        : `Tossed ${logged.item_name || 'item'} into ${logged.category || category} · +${logged.points || 0} points`,
     );
-    await refreshLeaderboards();
+    clearResult();
   } catch (error) {
-    toast(error.message, true);
+    toast(friendlyError(error), true);
   } finally {
     state.busy = false;
-    setBusy(el.disposeBtn, false);
-    el.disposeBtn.textContent = 'Toss into virtual bin';
+    setBusy(el.tossToBinBtn, false);
   }
 }
 
@@ -799,259 +1242,320 @@ async function claimDay(day, button) {
   }
 
   state.busy = true;
-  setBusy(button, true, '\u2026');
+  setBusy(button, true);
   try {
     const payload = await postJson('/api/challenge/complete', {
       user_id: state.profile.id,
       day_number: day,
     });
-    el.ecoScore.textContent = String(payload.new_points);
     state.profile.eco_points = payload.new_points;
     localStorage.setItem(PROFILE_KEY, JSON.stringify(state.profile));
+    renderPoints(payload.new_points);
+    animatePointsPill();
     renderChallenges(payload.challenges);
     toast(
       payload.awarded
-        ? `Day ${day} claimed (+${payload.awarded_points} pts)`
+        ? `Day ${day} complete · +${payload.awarded_points} points`
         : `Day ${day} was already claimed.`,
     );
-    await refreshLeaderboards();
   } catch (error) {
-    toast(error.message, true);
+    toast(friendlyError(error), true);
     setBusy(button, false);
   } finally {
     state.busy = false;
   }
 }
 
-/* ---------------- leaderboards ---------------- */
-
-function rankRow(position, title, subtitle, score) {
-  return `
-    <li class="rank-item">
-      <span class="rank-position">${position}</span>
-      <span class="rank-name">${escapeHtml(title)}
-        <span class="rank-sub">${escapeHtml(subtitle)}</span>
-      </span>
-      <span class="rank-score">${score} pts</span>
-    </li>`;
-}
-
-function renderLeaderboards(payload) {
-  const groups = (payload && (payload.groups || payload.campuses)) || [];
-  const users = (payload && payload.users) || [];
-  state.leadership = { users, groups };
-
-  el.userRank.innerHTML = users.length
-    ? users
-        .map((row, index) =>
-          rankRow(
-            index + 1,
-            row.username,
-            [row.group_name || row.campus, row.city].filter(Boolean).join(' \u00b7 '),
-            row.eco_points,
-          ),
-        )
-        .join('')
-    : '<li class="rank-empty">No disposals logged yet.</li>';
-
-  el.groupRank.innerHTML = groups.length
-    ? groups
-        .map((row, index) =>
-          rankRow(
-            index + 1,
-            row.group_name || row.campus,
-            `${row.members} member${row.members === 1 ? '' : 's'}`,
-            row.total_points,
-          ),
-        )
-        .join('')
-    : '<li class="rank-empty">No group data yet.</li>';
-
-  const current = el.rankFilter.value;
-  const options = ['<option value="">All communities</option>']
-    .concat(
-      groups.map(
-        (row) =>
-          `<option value="${escapeHtml(row.group_name || row.campus)}">${escapeHtml(
-            row.group_name || row.campus,
-          )}</option>`,
-      ),
-    )
-    .join('');
-  el.rankFilter.innerHTML = options;
-  if (current) {
-    el.rankFilter.value = current;
-  }
-  applyRankView();
-}
-
-function applyRankView() {
-  const scope = el.rankScope.value;
-  const showGroups = scope === 'groups';
-  el.groupRank.hidden = !showGroups;
-  el.userRank.hidden = showGroups;
-  el.rankFilterField.hidden = !showGroups;
-
-  const filter = el.rankFilter.value;
-  if (!showGroups || !filter) {
-    return;
-  }
-  const rows = state.leadership.groups.filter(
-    (row) => (row.group_name || row.campus) === filter,
-  );
-  el.groupRank.innerHTML = rows.length
-    ? rows
-        .map((row, index) =>
-          rankRow(
-            index + 1,
-            row.group_name || row.campus,
-            `${row.members} member${row.members === 1 ? '' : 's'}`,
-            row.total_points,
-          ),
-        )
-        .join('')
-    : '<li class="rank-empty">This community has no points yet.</li>';
-}
-
-async function refreshLeaderboards() {
-  try {
-    renderLeaderboards(await callApi('/api/leaderboard'));
-  } catch (error) {
-    el.userRank.innerHTML = `<li class="rank-empty">${escapeHtml(error.message)}</li>`;
-  }
-}
-
 /* ---------------- navigation & wiring ---------------- */
 
-function activateTab(name) {
-  for (const tab of el.tabs) {
-    const isActive = tab.dataset.tab === name;
-    tab.classList.toggle('is-active', isActive);
-    tab.setAttribute('aria-selected', String(isActive));
-    tab.tabIndex = isActive ? 0 : -1;
+function switchTab(tabName) {
+  const isScan = tabName === 'scan';
+  el.tabBtnScan.setAttribute('aria-selected', String(isScan));
+  el.tabBtnBadges.setAttribute('aria-selected', String(!isScan));
+  if (el.mobileTabScan) {
+    el.mobileTabScan.setAttribute('aria-selected', String(isScan));
+    el.mobileTabScan.classList.toggle('is-active', isScan);
   }
-  for (const panel of el.panels) {
-    const isActive = panel.id === `tab-${name}`;
-    panel.classList.toggle('is-active', isActive);
-    panel.hidden = !isActive;
+  if (el.mobileTabBadges) {
+    el.mobileTabBadges.setAttribute('aria-selected', String(!isScan));
+    el.mobileTabBadges.classList.toggle('is-active', !isScan);
   }
-  if (name === 'rank') {
-    refreshLeaderboards();
+  el.panelScan.classList.toggle('hidden', !isScan);
+  el.panelBadges.classList.toggle('hidden', isScan);
+  if (!isScan) {
+    stopSpeech();
+    applyChallengeFilter();
+    applyBadgeFilter();
   }
 }
 
 function wireEvents() {
-  el.tabs.forEach((tab) => {
-    tab.addEventListener('click', () => activateTab(tab.dataset.tab));
-  });
+  el.tabBtnScan.addEventListener('click', () => switchTab('scan'));
+  el.tabBtnBadges.addEventListener('click', () => switchTab('badges'));
+  if (el.mobileTabScan) el.mobileTabScan.addEventListener('click', () => switchTab('scan'));
+  if (el.mobileTabBadges) el.mobileTabBadges.addEventListener('click', () => switchTab('badges'));
 
-  const tablist = document.querySelector('.tabs');
-  tablist.addEventListener('keydown', (event) => {
-    const keys = ['ArrowRight', 'ArrowLeft', 'Home', 'End'];
-    if (!keys.includes(event.key)) {
-      return;
-    }
-    event.preventDefault();
-    const order = el.tabs.map((tab) => tab.dataset.tab);
-    const current = order.indexOf(
-      document.activeElement?.dataset?.tab ?? el.tabs[0].dataset.tab,
-    );
-    let next = current;
-    if (event.key === 'ArrowRight') next = (current + 1) % order.length;
-    if (event.key === 'ArrowLeft') next = (current - 1 + order.length) % order.length;
-    if (event.key === 'Home') next = 0;
-    if (event.key === 'End') next = order.length - 1;
-    activateTab(order[next]);
-    el.tabs[next].focus();
+  // settings popover
+  el.settingsToggleBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const willOpen = el.settingsPopover.classList.contains('hidden');
+    el.settingsPopover.classList.toggle('hidden', !willOpen);
+    el.settingsToggleBtn.setAttribute('aria-expanded', String(willOpen));
   });
+  document.addEventListener('click', (event) => {
+    if (!el.settingsPopover.contains(event.target) && event.target !== el.settingsToggleBtn) {
+      el.settingsPopover.classList.add('hidden');
+      el.settingsToggleBtn.setAttribute('aria-expanded', 'false');
+    }
+  });
+  el.resetProfileBtn.addEventListener('click', resetLocalProfile);
+
+  if (el.settingsLeaves) {
+    el.settingsLeaves.addEventListener('change', () => {
+      setLeavesEnabled(el.settingsLeaves.checked);
+    });
+  }
+  if (el.settingsAutoRead) {
+    el.settingsAutoRead.addEventListener('change', () => {
+      speech.autoRead = el.settingsAutoRead.checked;
+      updateSpeechControls();
+      if (speech.autoRead) primeSpeech();
+    });
+  }
 
   // profile
-  el.groupSelect.addEventListener('change', syncCustomFields);
-  el.citySelect.addEventListener('change', syncCustomFields);
-  el.setProfile.addEventListener('click', applyProfile);
-  el.username.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      applyProfile();
-    }
+  el.communitySelect.addEventListener('change', syncCustomProfileFields);
+  el.citySelect.addEventListener('change', syncCustomProfileFields);
+  el.profileForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    applyProfile();
   });
-  el.resetProfile.addEventListener('click', resetProfile);
 
   // camera
-  el.startCamera.addEventListener('click', () => startCamera());
-  el.capturePhoto.addEventListener('click', capturePhoto);
-  el.switchCamera.addEventListener('change', () => {
-    if (el.switchCamera.value) {
-      startCamera(el.switchCamera.value);
+  el.startCameraBtn.addEventListener('click', () => startCamera());
+  el.capturePhotoBtn.addEventListener('click', capturePhoto);
+  el.stopCameraBtn.addEventListener('click', () => stopCamera(true));
+  if (el.clearScanBtn) el.clearScanBtn.addEventListener('click', clearScanPreview);
+  el.cameraDeviceSelect.addEventListener('change', () => {
+    if (el.cameraDeviceSelect.value) {
+      startCamera(el.cameraDeviceSelect.value);
     }
   });
-  el.retake.addEventListener('click', retakePhoto);
-  el.stopCamera.addEventListener('click', stopCamera);
-
-  // samples & upload
-  el.useSample.addEventListener('click', () => {
-    const keyword = el.sampleSelect.value;
-    const label = el.sampleSelect.options[el.sampleSelect.selectedIndex].textContent;
-    identifyPreset(keyword, label.trim());
-  });
-  el.presets.forEach((preset) => {
-    preset.addEventListener('click', () =>
-      identifyPreset(preset.dataset.preset, preset.textContent.trim()),
-    );
-  });
-  el.imageInput.addEventListener('change', () => {
-    handleFile(el.imageInput.files[0]);
-    el.imageInput.value = '';
+  el.photoUploadInput.addEventListener('change', (event) => {
+    const file = event.target.files && event.target.files[0];
+    if (!file) {
+      return;
+    }
+    stopCamera(false);
+    hideFallbackMessage();
+    showPreview(URL.createObjectURL(file));
+    identifyBlob(file, file.name || 'upload.jpg');
+    event.target.value = '';
   });
 
-  ['dragenter', 'dragover'].forEach((type) => {
-    el.dropzone.addEventListener(type, (event) => {
-      event.preventDefault();
-      el.dropzone.classList.add('is-dragover');
+  // samples
+  el.samplePresetSelect.addEventListener('change', () => {
+    const keyword = el.samplePresetSelect.value;
+    if (!keyword) {
+      return;
+    }
+    const label = el.samplePresetSelect.options[el.samplePresetSelect.selectedIndex].textContent.trim();
+    identifyPreset(keyword, label);
+  });
+  el.presetChips.forEach((chip) => {
+    chip.addEventListener('click', () => {
+      const keyword = chip.dataset.preset;
+      el.samplePresetSelect.value = keyword;
+      identifyPreset(keyword, chip.textContent.trim());
     });
   });
-  ['dragleave', 'drop'].forEach((type) => {
-    el.dropzone.addEventListener(type, (event) => {
-      event.preventDefault();
-      el.dropzone.classList.remove('is-dragover');
-    });
+
+  // result + sorting-guide speech
+  el.binOverrideSelect.addEventListener('change', () => {
+    renderSelectedBinTag(el.binOverrideSelect.value);
   });
-  el.dropzone.addEventListener('drop', (event) => {
-    handleFile(event.dataTransfer?.files?.[0]);
+  el.tossToBinBtn.addEventListener('click', dispose);
+
+  el.readAloudBtn.addEventListener('click', () => {
+    if (speech.speaking) {
+      stopSpeech();
+    } else {
+      speakSortingGuide();
+    }
   });
 
-  // result
-  el.categoryOverride.addEventListener('change', () => {
-    el.overrideHint.hidden = el.categoryOverride.value === '';
-  });
-  el.disposeBtn.addEventListener('click', dispose);
-  el.claims.forEach((button) => {
-    button.addEventListener('click', () =>
-      claimDay(Number(button.dataset.claimDay), button),
-    );
+  el.autoReadBtn.addEventListener('change', () => {
+    speech.autoRead = el.autoReadBtn.checked;
+    updateSpeechControls();
+    if (speech.autoRead) {
+      primeSpeech();
+    }
   });
 
-  // badges filter & leaderboard controls
-  el.challengeFilter.addEventListener('change', applyChallengeFilter);
-  el.rankScope.addEventListener('change', applyRankView);
-  el.rankFilter.addEventListener('change', applyRankView);
+  // challenges / badges
+  el.challengeFilterSelect.addEventListener('change', applyChallengeFilter);
+  if (el.badgeFilterSelect) {
+    el.badgeFilterSelect.addEventListener('change', applyBadgeFilter);
+  }
+  el.challengeList.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-claim-day]');
+    if (!button) {
+      return;
+    }
+    claimDay(Number(button.dataset.claimDay), button);
+  });
 
   window.addEventListener('pagehide', () => {
     stopStream();
+    stopSpeech();
   });
+}
+
+/* ---------------- ambient leaves ---------------- */
+
+const leafState = {
+  ctx: null,
+  items: [],
+  raf: null,
+  width: 0,
+  height: 0,
+  colors: [
+    'rgba(105, 136, 82, 0.28)',
+    'rgba(135, 170, 108, 0.25)',
+    'rgba(117, 130, 69, 0.22)',
+    'rgba(70, 123, 88, 0.2)',
+  ],
+};
+
+function resizeLeafCanvas() {
+  if (!el.leafCanvas) {
+    return;
+  }
+  leafState.width = window.innerWidth;
+  leafState.height = window.innerHeight;
+  el.leafCanvas.width = leafState.width;
+  el.leafCanvas.height = leafState.height;
+}
+
+function createLeaf(randomY = false) {
+  return {
+    x: Math.random() * leafState.width,
+    y: randomY ? Math.random() * leafState.height : -30,
+    size: Math.random() * 9 + 8,
+    speedY: Math.random() * 0.45 + 0.35,
+    speedX: Math.sin(Math.random() * Math.PI) * 0.3 + 0.15,
+    rotation: Math.random() * Math.PI * 2,
+    rotSpeed: (Math.random() - 0.5) * 0.015,
+    sway: Math.random() * 100,
+    color: leafState.colors[Math.floor(Math.random() * leafState.colors.length)],
+  };
+}
+
+function drawLeaf(ctx, leaf) {
+  ctx.save();
+  ctx.translate(leaf.x, leaf.y);
+  ctx.rotate(leaf.rotation);
+  ctx.fillStyle = leaf.color;
+  ctx.beginPath();
+  ctx.moveTo(0, -leaf.size);
+  ctx.bezierCurveTo(
+    leaf.size * 0.7,
+    -leaf.size * 0.4,
+    leaf.size * 0.7,
+    leaf.size * 0.4,
+    0,
+    leaf.size,
+  );
+  ctx.bezierCurveTo(
+    -leaf.size * 0.7,
+    leaf.size * 0.4,
+    -leaf.size * 0.7,
+    -leaf.size * 0.4,
+    0,
+    -leaf.size,
+  );
+  ctx.fill();
+  ctx.restore();
+}
+
+function animateLeaves() {
+  if (!leafState.ctx || !state.leavesEnabled) {
+    leafState.raf = null;
+    return;
+  }
+  leafState.ctx.clearRect(0, 0, leafState.width, leafState.height);
+  leafState.items.forEach((leaf) => {
+    leaf.y += leaf.speedY;
+    leaf.sway += 0.02;
+    leaf.x += Math.sin(leaf.sway) * 0.5 + leaf.speedX;
+    leaf.rotation += leaf.rotSpeed;
+    if (leaf.y > leafState.height + 40 || leaf.x > leafState.width + 40) {
+      Object.assign(leaf, createLeaf(false));
+    }
+    drawLeaf(leafState.ctx, leaf);
+  });
+  leafState.raf = requestAnimationFrame(animateLeaves);
+}
+
+function startLeaves() {
+  if (!leafState.ctx || leafState.raf) {
+    return;
+  }
+  leafState.raf = requestAnimationFrame(animateLeaves);
+}
+
+function stopLeaves() {
+  if (leafState.raf) {
+    cancelAnimationFrame(leafState.raf);
+    leafState.raf = null;
+  }
+  if (leafState.ctx) {
+    leafState.ctx.clearRect(0, 0, leafState.width, leafState.height);
+  }
+}
+
+function setLeavesEnabled(enabled) {
+  state.leavesEnabled = Boolean(enabled);
+  if (el.settingsLeaves) {
+    el.settingsLeaves.checked = state.leavesEnabled;
+  }
+  if (state.leavesEnabled) {
+    startLeaves();
+  } else {
+    stopLeaves();
+  }
+}
+
+function initLeaves() {
+  if (!el.leafCanvas) {
+    return;
+  }
+  leafState.ctx = el.leafCanvas.getContext('2d');
+  if (!leafState.ctx) {
+    return;
+  }
+  resizeLeafCanvas();
+  leafState.items = Array.from({ length: 16 }, () => createLeaf(true));
+  window.addEventListener('resize', resizeLeafCanvas);
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  setLeavesEnabled(!reduced);
 }
 
 async function init() {
   wireEvents();
-  syncCustomFields();
-  activateTab('scan');
-  renderProfileSummary();
-  loadCapabilities();
+  initSpeech();
+  initLeaves();
+  loadActivity();
+  renderRecentActivity();
+  syncCustomProfileFields();
+  renderProfileStatus();
+  applyChallengeFilter();
+  applyBadgeFilter();
+  renderChallengeProgress();
+  await loadCapabilities();
   if (restoreProfile()) {
-    // Re-hydrate server state for the remembered profile without a toast.
-    await applyProfile({ silent: true });
+    await hydrateProfile();
   }
-  await refreshLeaderboards();
 }
 
 init();

@@ -10,9 +10,9 @@
  *   node camera.mjs
  *
  * Checks: live preview starts, Capture Photo produces a frame and an analysis,
- * Stop Camera releases the device, permission denial degrades to the upload path
- * with a friendly message, rate limiting surfaces a 429 toast, and the console
- * stays clean.
+ * the camera is released after capture, permission denial degrades to the
+ * upload path with a friendly message, rate limiting surfaces a 429 toast, and
+ * the console stays clean.
  */
 
 import { chromium } from 'playwright-core';
@@ -20,6 +20,7 @@ import { chromium } from 'playwright-core';
 const CHROME = process.env.CHROME_PATH ||
   'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const BASE = process.env.ECOSORT_URL || 'http://127.0.0.1:5000/';
+const USER = `CameraTester-${Date.now().toString(36)}`;
 
 /**
  * Wait until the identify rate-limit window has room again. Re-running this
@@ -72,12 +73,12 @@ page.on('pageerror', (error) => consoleErrors.push(String(error)));
 await page.goto(BASE, { waitUntil: 'networkidle' });
 
 // A profile is required before a disposal can be logged.
-await page.fill('#username', 'CameraTester');
-await page.selectOption('#group-select', 'Apartment Society');
-await page.selectOption('#city-select', 'Coimbatore');
-await page.click('#set-profile');
+await page.fill('#displayNameInput', USER);
+await page.selectOption('#communitySelect', 'Apartment Society');
+await page.selectOption('#citySelect', 'Coimbatore');
+await page.click('#profileForm button[type="submit"]');
 await page.waitForFunction(
-  () => document.getElementById('eco-score')?.textContent === '0',
+  () => document.getElementById('ecoPointsValue')?.textContent.trim() === '0',
   null,
   { timeout: 5000 },
 ).catch(() => {});
@@ -85,98 +86,87 @@ await page.waitForFunction(
 await waitForIdentifyBudget(page);
 
 // --- 1. live camera starts ----------------------------------------------
-await page.click('#start-camera');
+await page.click('#startCameraBtn');
 const live = await page.waitForFunction(() => {
-  const video = document.getElementById('camera-video');
-  return video && !video.hidden && video.videoWidth > 0;
+  const video = document.getElementById('cameraVideo');
+  return video && !video.classList.contains('hidden') && video.videoWidth > 0;
 }, null, { timeout: 8000 }).then(() => true).catch(() => false);
 const dims = await page.evaluate(() => {
-  const video = document.getElementById('camera-video');
+  const video = document.getElementById('cameraVideo');
   return video ? `${video.videoWidth}x${video.videoHeight}` : 'no video';
 });
 check('live camera stream starts and renders frames', live, dims);
 
 const controls = await page.evaluate(() => ({
-  capture: !document.getElementById('capture-photo').hidden,
-  stop: !document.getElementById('stop-camera').hidden,
-  start: !document.getElementById('start-camera').hidden,
-  status: document.getElementById('camera-status').textContent.trim(),
+  capture: !document.getElementById('capturePhotoBtn').classList.contains('hidden'),
+  stop: !document.getElementById('stopCameraBtn').classList.contains('hidden'),
+  start: !document.getElementById('startCameraBtn').classList.contains('hidden'),
 }));
 check('capture + stop controls appear, start hidden while live',
-  controls.capture && controls.stop && !controls.start, controls.status);
+  controls.capture && controls.stop && !controls.start, JSON.stringify(controls));
 
 // --- 2. capture -> preview + analysis -----------------------------------
-await page.click('#capture-photo');
-const analysed = await page.waitForSelector('#result-card:not([hidden])', { timeout: 15000 })
+await page.click('#capturePhotoBtn');
+const analysed = await page.waitForSelector('#resultActiveState:not(.hidden)', { timeout: 15000 })
   .then(() => true).catch(() => false);
 const previewShown = await page.evaluate(() => {
-  const preview = document.getElementById('capture-preview');
-  return !preview.hidden && preview.src.startsWith('blob:');
+  const preview = document.getElementById('imagePreview');
+  return !preview.classList.contains('hidden') && preview.src.startsWith('blob:');
 });
 check('captured frame shows a live preview', previewShown);
 check('captured frame produces an analysis result', analysed,
-  analysed ? await page.textContent('#result-category') : 'no result card');
+  analysed ? await page.textContent('#binOverrideSelect') : 'no result card');
 
 // --- 3. provenance is labelled -----------------------------------------
 const provenance = await page.evaluate(() => {
-  const chip = document.getElementById('result-source');
-  const note = document.getElementById('result-note');
+  const pill = document.getElementById('resultModePill');
+  const note = document.getElementById('resultVisionNote');
   return {
-    visible: !chip.hidden,
-    label: chip.textContent.trim(),
-    source: chip.dataset.source,
-    note: note.hidden ? '' : note.textContent.trim(),
+    label: pill.textContent.trim(),
+    ai: pill.classList.contains('pill-mode-ai'),
+    note: note.classList.contains('hidden') ? '' : note.textContent.trim(),
   };
 });
 check('result states whether AI vision or the offline fallback answered',
-  provenance.visible && ['ai_vision', 'offline_fallback'].includes(provenance.source),
-  `${provenance.label} (${provenance.source})`);
+  /AI Vision|Offline Rules/.test(provenance.label),
+  `${provenance.label} (ai=${provenance.ai})`);
 check('unconfigured AI explains itself instead of pretending',
-  provenance.source === 'ai_vision' || provenance.note.length > 0,
-  provenance.note.slice(0, 70));
+  provenance.ai || provenance.note.length > 0,
+  provenance.note.slice(0, 80));
 
-// --- 4. retake / stop ---------------------------------------------------
-await page.click('#retake');
-const retakeState = await page.evaluate(() => {
-  const preview = document.getElementById('capture-preview');
-  const video = document.getElementById('camera-video');
-  return { previewHidden: preview.hidden, videoVisible: !video.hidden, cardHidden: document.getElementById('result-card').hidden };
-});
-check('retake restores the live view and clears the result',
-  retakeState.previewHidden && retakeState.videoVisible && retakeState.cardHidden);
-
-await page.click('#stop-camera');
-const stopped = await page.evaluate(() => {
-  const video = document.getElementById('camera-video');
+// --- 4. capture releases the camera ------------------------------------
+const afterCapture = await page.evaluate(() => {
+  const video = document.getElementById('cameraVideo');
   return {
-    videoHidden: video.hidden,
-    startVisible: !document.getElementById('start-camera').hidden,
+    videoHidden: video.classList.contains('hidden'),
+    startVisible: !document.getElementById('startCameraBtn').classList.contains('hidden'),
     tracksLive: video.srcObject ? video.srcObject.getTracks().some((t) => t.readyState === 'live') : false,
   };
 });
-check('stop camera hides the stream and releases the device',
-  stopped.videoHidden && stopped.startVisible && !stopped.tracksLive);
+check('capture stops the stream and restores Start Camera',
+  afterCapture.videoHidden && afterCapture.startVisible && !afterCapture.tracksLive,
+  JSON.stringify(afterCapture));
 
 // --- 5. permission denial degrades gracefully --------------------------
 await page.evaluate(() => {
   navigator.mediaDevices.getUserMedia = () =>
     Promise.reject(Object.assign(new Error('denied'), { name: 'NotAllowedError' }));
 });
-await page.click('#start-camera');
+await page.click('#startCameraBtn');
 await page.waitForFunction(
-  () => /permission denied/i.test(document.getElementById('camera-status').textContent),
+  () => /permission was denied/i.test(document.getElementById('cameraFallbackMsg').textContent),
   null,
   { timeout: 5000 },
 ).catch(() => {});
 const denied = await page.evaluate(() => ({
-  status: document.getElementById('camera-status').textContent.trim(),
-  isError: document.getElementById('camera-status').classList.contains('is-error'),
-  uploadReady: Boolean(document.getElementById('image-input')),
-  presets: document.querySelectorAll('.preset').length,
+  status: document.getElementById('cameraFallbackMsg').textContent.trim(),
+  visible: !document.getElementById('cameraFallbackBox').classList.contains('hidden'),
+  uploadReady: Boolean(document.getElementById('photoUploadInput')),
+  presets: document.querySelectorAll('.preset-chip').length,
 }));
 check('permission denial shows a friendly message and keeps upload + presets',
-  denied.isError && /permission denied/i.test(denied.status) && denied.uploadReady && denied.presets === 6,
-  denied.status.slice(0, 60));
+  denied.visible && /permission was denied/i.test(denied.status) && denied.uploadReady && denied.presets === 6,
+  denied.status.slice(0, 70));
 
 // Everything above must be console-clean. Chrome logs the deliberate 429s from
 // the next section as console errors of its own, so the snapshot is taken here.
@@ -200,11 +190,11 @@ check('identify rate limit returns 429 with Retry-After', throttled.hit,
   throttled.hit ? `Retry-After ${throttled.retryAfter}s` : 'limits were not reached');
 
 if (throttled.hit) {
-  await page.click('.preset[data-preset="banana"]');
-  await page.waitForTimeout(600);
-  const toastText = await page.evaluate(() => document.getElementById('toast').textContent.trim());
+  await page.click('.preset-chip[data-preset="banana"]');
+  await page.waitForTimeout(700);
+  const toastText = await page.evaluate(() => document.getElementById('toastRegion').textContent.trim());
   check('429 surfaces in the UI toast instead of crashing',
-    /too many requests/i.test(toastText), toastText.slice(0, 80));
+    /too many requests/i.test(toastText), toastText.slice(0, 90));
 }
 
 // --- 7. console ---------------------------------------------------------

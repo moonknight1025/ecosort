@@ -59,11 +59,46 @@ UPLOAD_DIR = os.path.join(BASE_DIR, "static", "uploads")
 # Single source of truth for the exact category literals, bin colours and base
 # scores. Every seed row, API response and frontend bin derives from here.
 BIN_META = {
-    "Wet Waste": {"bin_color": "Green", "hex": "#2e7d32", "slug": "wet"},
-    "Recyclable Waste": {"bin_color": "Blue", "hex": "#1565c0", "slug": "recyclable"},
-    "Dry Waste": {"bin_color": "Gray", "hex": "#546e7a", "slug": "dry"},
-    "E-Waste": {"bin_color": "Purple", "hex": "#6a1b9a", "slug": "ewaste"},
-    "Hazardous Waste": {"bin_color": "Red", "hex": "#c62828", "slug": "hazardous"},
+    "Wet Waste": {
+        "bin_color": "Green",
+        "hex": "#2e7d32",
+        "slug": "wet",
+        "emoji": "🥬",
+        "description": "Food scraps, peels, coffee grounds",
+        "bin_label": "Organics cart",
+    },
+    "Recyclable Waste": {
+        "bin_color": "Blue",
+        "hex": "#1565c0",
+        "slug": "recyclable",
+        "emoji": "♻️",
+        "description": "Cans, cartons, clean rigid plastic",
+        "bin_label": "Blue commingled",
+    },
+    "Dry Waste": {
+        "bin_color": "Gray",
+        "hex": "#546e7a",
+        "slug": "dry",
+        "emoji": "🧻",
+        "description": "Soiled wraps, dust, composites",
+        "bin_label": "Gray non-recyclable",
+    },
+    "E-Waste": {
+        "bin_color": "Purple",
+        "hex": "#6a1b9a",
+        "slug": "ewaste",
+        "emoji": "🔌",
+        "description": "Batteries, cords, circuit boards",
+        "bin_label": "Certified drop-off",
+    },
+    "Hazardous Waste": {
+        "bin_color": "Red",
+        "hex": "#c62828",
+        "slug": "hazardous",
+        "emoji": "☣️",
+        "description": "Paints, aerosols, harsh solvents",
+        "bin_label": "Civic hazardous site",
+    },
 }
 
 FALLBACK_CATEGORY = "Dry Waste"
@@ -270,6 +305,18 @@ CHALLENGE_TASKS = {
 }
 CHALLENGE_REWARD = 15
 
+# Short, human tips shown under each challenge title in the AI Studio layout.
+# The task text itself remains the single source of truth above.
+CHALLENGE_TIPS = {
+    1: "Skip single-use plastic bottles for a full day.",
+    2: "Keep kitchen peels apart from clean paper and wrappers.",
+    3: "Bring a cloth or tote bag on your grocery run.",
+    4: "Plan portions carefully and compost unavoidable scraps.",
+    5: "Gather old cables or dead batteries for safe drop-off.",
+    6: "Clean one jar or bottle so it won't spoil paper recyclables.",
+    7: "Help one family member or neighbour sort an item correctly.",
+}
+
 # Achievement badges (PRD section 4.2). Unlock rules are evaluated dynamically
 # from milestone 4 onwards; until then every badge renders locked.
 BADGES = [
@@ -278,6 +325,24 @@ BADGES = [
     ("hazard_hero", "Hazard Hero", "Safely log 1 e-waste or hazardous item."),
     ("green_champion", "Green Champion", "Bank 100 Eco Points."),
 ]
+
+# Presentation-only emoji for the badge cards; IDs and rules stay above.
+BADGE_EMOJI = {
+    "first_step": "🌱",
+    "plastic_warrior": "🛡️",
+    "hazard_hero": "⚡",
+    "green_champion": "🏆",
+}
+
+# Presentation-only emoji for the quick-sample chips.
+SAMPLE_EMOJI = {
+    "bottle": "🧴",
+    "banana": "🍌",
+    "battery": "🔋",
+    "box": "📦",
+    "charger": "🔌",
+    "wrapper": "🥨",
+}
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS users (
@@ -947,8 +1012,13 @@ def identify_waste():
     Every unmatched, empty or rejected input still resolves to the Dry Waste
     fallback with HTTP 200 - the PRD forbids a 500 on bad uploads.
     """
+    payload = request.get_json(silent=True) or {}
     keyword = str(
-        request.form.get("preset_keyword") or request.form.get("keyword") or ""
+        request.form.get("preset_keyword")
+        or request.form.get("keyword")
+        or payload.get("preset_keyword")
+        or payload.get("keyword")
+        or ""
     ).strip()
 
     image_path = None
@@ -1271,8 +1341,11 @@ def index():
         default_city=DEFAULT_CITY,
         bins=[(category, meta) for category, meta in BIN_META.items()],
         badges=BADGES,
+        badge_emoji=BADGE_EMOJI,
         challenge_tasks=CHALLENGE_TASKS,
+        challenge_tips=CHALLENGE_TIPS,
         challenge_reward=CHALLENGE_REWARD,
+        sample_emoji=SAMPLE_EMOJI,
         # Handed to app.js as JSON so the frontend never re-declares the
         # category literals, colours or point values that live above.
         domain_config={
@@ -1287,4 +1360,8 @@ def index():
 
 if __name__ == "__main__":
     ensure_bootstrapped()
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    app.run(
+        host=os.environ.get("ECOSORT_HOST", "127.0.0.1"),
+        port=int(os.environ.get("ECOSORT_PORT", "5000")),
+        debug=False,
+    )
