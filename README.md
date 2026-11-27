@@ -235,22 +235,27 @@ Migrations are additive and run before any index is created, so an older
 ## 5. Tests
 
 ```bash
-python tests/verify_api.py        # 16 checks, isolated temp database
+python tests/verify_api.py        # 19 checks, isolated temp database
 cd ecosort_flutter
 flutter analyze                   # clean
-flutter test                      # 30 tests
+flutter test                      # 31 tests
 
 # optional browser checks (drive the installed Chrome, ~1 min of setup)
 cd tests/e2e && npm install
-node flow.mjs                     # full demo + 375 px layout, 13 checks
-node camera.mjs                   # live camera, fallbacks, 429, 12 checks
+node flow.mjs                     # full demo + voice + mobile/desktop layout, 35 checks
+node controls.mjs                 # control surface + 375/320 px overflow, 13 checks
+node camera.mjs                   # live camera, fallbacks, 429, 11 checks
 ```
 
 `tests/e2e/controls.mjs` covers the control surface itself: profile dropdowns
 with custom entry, the settings popover, the sample dropdown, the category
 override (proving the recyclable bin gets the point, not the hazardous one), the
-challenge filter, the leaderboard scope/filter, and no horizontal overflow at
-375px and 320px.
+challenge filter, and no horizontal overflow at 375px and 320px.
+
+`tests/e2e/flow.mjs` also verifies the sorting-guide voice scope: read-aloud
+speaks only item, category/bin and preparation steps; auto-read is off by
+default; auto-read primes with a silent utterance; stop/end/error states reset;
+and unsupported speech disables the controls without page errors.
 
 `tests/e2e/*.mjs` use `playwright-core` against the **installed** Chrome, so no
 browser is downloaded and nothing is added to the app. `camera.mjs` uses
@@ -277,7 +282,29 @@ Both use the same token-first matching rule (a keyword matches a whole token, or
 a substring only when it is at least 5 characters), which is what keeps the
 3-character `med` keyword from firing on `media_player.png`.
 
-## 6. Status
+## 6. Cloudflare preview (quick tunnel)
+
+Flask + SQLite is a stateful server, so it cannot be hosted as a static
+Cloudflare Pages site. For a public HTTPS preview, use a Cloudflare Tunnel
+against the local Flask process:
+
+```bash
+# install once (Windows)
+winget install --id Cloudflare.cloudflared -e
+
+# with the Flask app already running on 127.0.0.1:5000
+cloudflared tunnel --url http://127.0.0.1:5000
+```
+
+Cloudflare prints a `https://<random>.trycloudflare.com` URL. That URL is
+HTTPS, so camera access works, and it forwards to the same Flask/SQLite
+process. A quick tunnel is temporary and stops when the process exits.
+
+For a permanent deployment, use a named Cloudflare Tunnel attached to your
+account and domain, or port the API to Cloudflare Workers + D1 (SQLite). The
+current SQLite file and Python Gemini SDK do not run directly on Workers.
+
+## 7. Status
 
 | Milestone | State |
 | --- | --- |
@@ -288,7 +315,8 @@ a substring only when it is at least 5 characters), which is what keeps the
 | M5 automated API suite + browser E2E | done |
 | Flutter Web client | done |
 | Camera capture + AI vision + rate limiting | done |
-| Universal profiles (community / group + city) | done (this release) |
+| Universal profiles (community / group + city) | done |
+| Forest/moss/sage UI, voice guide, mobile nav, Cloudflare preview docs | done (this release) |
 
 Still open: no `LICENSE` file (a Product Owner decision). No auth: any client can
 act as any user, and the leaderboard is not evidence of real behaviour. Group
